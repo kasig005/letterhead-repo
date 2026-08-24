@@ -1,0 +1,670 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Letterhead</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Lora:wght@500;600&family=Public+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+
+<style>
+  :root {
+    --paper: #f5f6f3; --paper-raised: #ffffff; --paper-sunken: #eceeea;
+    --ink: #1b2028; --ink-soft: #3a4150; --muted: #5b6472;
+    --line: #dbdfe2; --line-soft: #e7eaec;
+    --accent: #2f4cdb; --accent-soft: #e8ecfc; --accent-ink: #ffffff;
+    --success: #1f7a5c; --success-bg: #e3f3ec;
+    --warning: #b5560b; --warning-bg: #fbeee1;
+    --danger: #c23b3b; --danger-bg: #fbeaea;
+    --focus-ring: #2f4cdb;
+    --shadow: 0 1px 2px rgba(27,32,40,0.04), 0 8px 24px -12px rgba(27,32,40,0.12);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper: #12151a; --paper-raised: #181c23; --paper-sunken: #0f1216;
+      --ink: #e7e9ee; --ink-soft: #c7ccd6; --muted: #8d96a6;
+      --line: #2a2f38; --line-soft: #232830;
+      --accent: #8b9dff; --accent-soft: rgba(139,157,255,0.14); --accent-ink: #0e1130;
+      --success: #4fd8a8; --success-bg: rgba(79,216,168,0.12);
+      --warning: #ffb25e; --warning-bg: rgba(255,178,94,0.12);
+      --danger: #ff8686; --danger-bg: rgba(255,134,134,0.12);
+      --focus-ring: #8b9dff;
+      --shadow: 0 1px 2px rgba(0,0,0,0.3), 0 8px 24px -12px rgba(0,0,0,0.5);
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper: #12151a; --paper-raised: #181c23; --paper-sunken: #0f1216;
+    --ink: #e7e9ee; --ink-soft: #c7ccd6; --muted: #8d96a6;
+    --line: #2a2f38; --line-soft: #232830;
+    --accent: #8b9dff; --accent-soft: rgba(139,157,255,0.14); --accent-ink: #0e1130;
+    --success: #4fd8a8; --success-bg: rgba(79,216,168,0.12);
+    --warning: #ffb25e; --warning-bg: rgba(255,178,94,0.12);
+    --danger: #ff8686; --danger-bg: rgba(255,134,134,0.12);
+    --focus-ring: #8b9dff;
+    --shadow: 0 1px 2px rgba(0,0,0,0.3), 0 8px 24px -12px rgba(0,0,0,0.5);
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: var(--paper); color: var(--ink);
+    font-family: "Public Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    font-size: 15px; line-height: 1.55; -webkit-font-smoothing: antialiased;
+  }
+  h1, h2, h3 { font-family: "Lora", Georgia, "Times New Roman", serif; font-weight: 600; text-wrap: balance; margin: 0; }
+  code, .mono { font-family: "IBM Plex Mono", ui-monospace, Menlo, monospace; }
+  a { color: var(--accent); }
+  button, input, textarea { font-family: inherit; font-size: inherit; color: inherit; }
+  button { cursor: pointer; }
+  button:disabled { cursor: not-allowed; opacity: 0.5; }
+  :focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+  @media (prefers-reduced-motion: reduce) { * { animation-duration: 0.001ms !important; transition-duration: 0.001ms !important; } }
+
+  .topbar {
+    position: sticky; top: 0; z-index: 10;
+    display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    padding: 14px 28px;
+    background: color-mix(in srgb, var(--paper) 88%, transparent);
+    backdrop-filter: blur(8px);
+    border-bottom: 1px solid var(--line-soft);
+  }
+  .brand { display: flex; align-items: center; gap: 10px; }
+  .brand-mark { width: 28px; height: 28px; border-radius: 7px; background: var(--accent); color: var(--accent-ink); display: flex; align-items: center; justify-content: center; font-size: 15px; flex: none; }
+  .brand-name { font-size: 17px; letter-spacing: 0.01em; }
+  .user-box { display: flex; align-items: center; gap: 12px; }
+  .user-email { font-size: 12.5px; color: var(--muted); font-family: "IBM Plex Mono", monospace; }
+
+  main { max-width: 860px; margin: 0 auto; padding: 36px 28px 96px; }
+  .lede { color: var(--muted); max-width: 62ch; margin: 0 0 32px; font-size: 15px; }
+  .lede strong { color: var(--ink-soft); font-weight: 600; }
+
+  .card { background: var(--paper-raised); border: 1px solid var(--line); border-radius: 14px; box-shadow: var(--shadow); padding: 22px 24px; margin-bottom: 22px; }
+  .card-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 4px; }
+  .card-head h2 { font-size: 18px; }
+  .card-sub { color: var(--muted); font-size: 13.5px; margin: 2px 0 18px; }
+
+  .field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 16px; }
+  .field:last-child { margin-bottom: 0; }
+  .field label { font-size: 12.5px; font-weight: 600; color: var(--ink-soft); letter-spacing: 0.02em; }
+  .field-hint { font-size: 12px; color: var(--muted); }
+  input[type="text"], input[type="email"], textarea {
+    background: var(--paper-sunken); border: 1px solid var(--line); border-radius: 8px;
+    padding: 9px 11px; color: var(--ink); width: 100%;
+  }
+  textarea { resize: vertical; min-height: 150px; line-height: 1.6; }
+  input::placeholder, textarea::placeholder { color: var(--muted); }
+  .row { display: flex; gap: 14px; }
+  .row > .field { flex: 1; }
+
+  .btn { display: inline-flex; align-items: center; justify-content: center; gap: 7px; border-radius: 8px; border: 1px solid transparent; padding: 8px 14px; font-size: 13.5px; font-weight: 600; white-space: nowrap; line-height: 1.2; transition: filter 120ms ease, background 120ms ease, border-color 120ms ease; }
+  .btn-primary { background: var(--accent); color: var(--accent-ink); }
+  .btn-primary:hover:not(:disabled) { filter: brightness(1.08); }
+  .btn-secondary { background: var(--paper-sunken); color: var(--ink-soft); border-color: var(--line); }
+  .btn-secondary:hover:not(:disabled) { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+  .btn-ghost { background: transparent; color: var(--muted); padding: 6px 8px; }
+  .btn-ghost:hover:not(:disabled) { color: var(--danger); }
+  .btn-sm { padding: 5px 10px; font-size: 12.5px; }
+
+  .pill { display: inline-flex; align-items: center; gap: 7px; padding: 5px 11px; border-radius: 999px; font-size: 12.5px; font-weight: 600; background: var(--paper-sunken); color: var(--muted); border: 1px solid var(--line); }
+  .pill-dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; flex: none; }
+  .pill.is-success { background: var(--success-bg); color: var(--success); border-color: transparent; }
+  .pill.is-warning { background: var(--warning-bg); color: var(--warning); border-color: transparent; }
+  .pill.is-danger { background: var(--danger-bg); color: var(--danger); border-color: transparent; }
+
+  .cv-row { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+  .cv-chip { display: flex; align-items: center; gap: 10px; background: var(--paper-sunken); border: 1px solid var(--line); border-radius: 10px; padding: 9px 13px; flex: 1; min-width: 220px; }
+  .cv-chip-icon { font-size: 17px; }
+  .cv-chip-name { font-weight: 600; font-size: 13.5px; }
+  .cv-chip-meta { font-size: 12px; color: var(--muted); }
+  .cv-empty { color: var(--muted); font-size: 13.5px; }
+  input[type="file"] { display: none; }
+
+  .tokens { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+  .token-btn { font-family: "IBM Plex Mono", monospace; font-size: 11.5px; background: var(--accent-soft); color: var(--accent); border: none; border-radius: 6px; padding: 4px 8px; }
+  .token-btn:hover { filter: brightness(1.1); }
+
+  .preview { margin-top: 16px; border-top: 1px dashed var(--line); padding-top: 16px; }
+  .preview-subject { font-weight: 600; margin-bottom: 8px; }
+  .preview-body { white-space: pre-wrap; color: var(--ink-soft); font-size: 14px; }
+  .preview-empty { color: var(--muted); font-size: 13.5px; }
+
+  .toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
+  .toolbar-left { display: flex; gap: 8px; flex-wrap: wrap; }
+  .stats { display: flex; gap: 16px; font-size: 12.5px; color: var(--muted); }
+  .stats b { font-variant-numeric: tabular-nums; color: var(--ink-soft); }
+
+  .paste-panel { background: var(--paper-sunken); border: 1px solid var(--line); border-radius: 10px; padding: 14px; margin-bottom: 16px; }
+  .paste-panel textarea { min-height: 110px; font-family: "IBM Plex Mono", monospace; font-size: 12.5px; }
+  .paste-actions { display: flex; gap: 8px; margin-top: 10px; }
+
+  .table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; }
+  table { width: 100%; border-collapse: collapse; min-width: 720px; }
+  thead th { text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); font-weight: 600; background: var(--paper-sunken); padding: 9px 12px; border-bottom: 1px solid var(--line); position: sticky; top: 0; }
+  tbody td { padding: 8px 12px; border-bottom: 1px solid var(--line-soft); vertical-align: middle; }
+  tbody tr:last-child td { border-bottom: none; }
+  tbody input[type="text"], tbody input[type="email"] { background: transparent; border: 1px solid transparent; border-radius: 6px; padding: 5px 7px; width: 100%; }
+  tbody input:hover { border-color: var(--line); }
+  tbody input:focus { background: var(--paper-sunken); border-color: var(--accent); }
+  td.col-email { font-family: "IBM Plex Mono", monospace; font-size: 12.5px; }
+  td.col-actions { display: flex; align-items: center; gap: 6px; white-space: nowrap; }
+  th.col-status, td.col-status { width: 150px; }
+  th.col-actions, td.col-actions { width: 150px; }
+
+  .status-pill { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; padding: 4px 9px; border-radius: 999px; }
+  .status-pill.pending { background: var(--paper-sunken); color: var(--muted); border: 1px solid var(--line); }
+  .status-pill.creating { background: var(--accent-soft); color: var(--accent); }
+  .status-pill.drafted { background: var(--success-bg); color: var(--success); }
+  .status-pill.error { background: var(--danger-bg); color: var(--danger); }
+  .status-note { display: block; font-size: 11px; color: var(--muted); margin-top: 2px; font-weight: 400; }
+  .spin { display: inline-block; width: 8px; height: 8px; border-radius: 50%; border: 1.5px solid currentColor; border-top-color: transparent; animation: spin 0.7s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .empty-state { text-align: center; padding: 40px 20px; color: var(--muted); }
+  .empty-state h3 { font-size: 15px; color: var(--ink-soft); margin-bottom: 6px; }
+  .empty-state .btn { margin-top: 14px; }
+
+  .foot-note { color: var(--muted); font-size: 12.5px; text-align: center; margin-top: 8px; }
+  .banner { display: flex; gap: 10px; align-items: flex-start; background: var(--warning-bg); color: var(--warning); border-radius: 10px; padding: 11px 14px; font-size: 13px; margin-bottom: 16px; }
+  .banner a { color: inherit; text-decoration: underline; }
+
+  /* signed-out hero */
+  .hero-wrap { max-width: 480px; margin: 10vh auto 0; padding: 0 24px; text-align: center; }
+  .hero-mark { width: 56px; height: 56px; border-radius: 14px; background: var(--accent); color: var(--accent-ink); display: flex; align-items: center; justify-content: center; font-size: 28px; margin: 0 auto 20px; }
+  .hero-wrap h1 { font-size: 26px; margin-bottom: 10px; }
+  .hero-wrap p { color: var(--muted); margin: 0 0 26px; }
+  .google-btn { display: inline-flex; align-items: center; gap: 10px; background: var(--paper-raised); border: 1px solid var(--line); border-radius: 10px; padding: 11px 20px; font-weight: 600; font-size: 14px; box-shadow: var(--shadow); }
+  .google-btn:hover { border-color: var(--accent); }
+  .hero-note { margin-top: 18px; font-size: 12.5px; color: var(--muted); }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="brand">
+    <div class="brand-mark">✉</div>
+    <div class="brand-name">Letterhead</div>
+  </div>
+  <div class="user-box" id="userBox"></div>
+</div>
+
+<div id="signedOutView" hidden>
+  <div class="hero-wrap">
+    <div class="hero-mark">✉</div>
+    <h1>Cold outreach, without the busywork</h1>
+    <p>Keep your CV, your message, and your target companies in one place. Letterhead writes a personalized, CV-attached draft into your own Gmail for every company — you review and hit send yourself.</p>
+    <button class="google-btn" id="signInBtn">
+      <svg width="18" height="18" viewBox="0 0 18 18"><path fill="#4285F4" d="M17.64 9.2c0-.64-.06-1.25-.16-1.84H9v3.48h4.84a4.14 4.14 0 0 1-1.8 2.72v2.26h2.9c1.7-1.57 2.7-3.88 2.7-6.62z"/><path fill="#34A853" d="M9 18c2.43 0 4.47-.8 5.96-2.18l-2.9-2.26c-.8.54-1.84.86-3.06.86-2.35 0-4.34-1.59-5.05-3.72H.94v2.33A9 9 0 0 0 9 18z"/><path fill="#FBBC05" d="M3.95 10.7A5.4 5.4 0 0 1 3.67 9c0-.59.1-1.17.28-1.7V4.97H.94A9 9 0 0 0 0 9c0 1.45.35 2.83.94 4.03l3.01-2.33z"/><path fill="#EA4335" d="M9 3.58c1.32 0 2.51.46 3.44 1.35l2.58-2.58C13.46.89 11.43 0 9 0A9 9 0 0 0 .94 4.97l3.01 2.33C4.66 5.17 6.65 3.58 9 3.58z"/></svg>
+      Sign in with Google
+    </button>
+    <p class="hero-note">You'll be asked to allow Gmail draft access — that's what lets Letterhead create drafts on your behalf. Nothing sends without you opening Gmail yourself.</p>
+  </div>
+</div>
+
+<main id="appView" hidden>
+  <p class="lede">Keep your CV, your message, and your target companies in one place. <strong>Letterhead</strong> writes a personalized, CV-attached draft into your Gmail for every company — you review and hit send yourself, nothing goes out on its own.</p>
+
+  <div id="reauthBanner"></div>
+
+  <section class="card" aria-labelledby="cv-heading">
+    <div class="card-head"><h2 id="cv-heading">Your CV</h2></div>
+    <p class="card-sub">Attached to every draft this app creates.</p>
+    <div class="cv-row">
+      <div id="cvChip"></div>
+      <label class="btn btn-secondary" for="cvInput" id="cvUploadBtn">Choose file</label>
+      <input type="file" id="cvInput" accept=".pdf,.doc,.docx,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document" />
+    </div>
+  </section>
+
+  <section class="card" aria-labelledby="template-heading">
+    <div class="card-head"><h2 id="template-heading">Message template</h2></div>
+    <p class="card-sub">One template, merged per company. Click a token to drop it in at your cursor.</p>
+    <div class="row">
+      <div class="field"><label for="yourNameInput">Your name</label><input type="text" id="yourNameInput" placeholder="e.g. Alex Rivera" /></div>
+      <div class="field"><label for="subjectInput">Subject</label><input type="text" id="subjectInput" /></div>
+    </div>
+    <div class="field">
+      <label for="bodyInput">Body</label>
+      <textarea id="bodyInput"></textarea>
+      <div class="tokens">
+        <button type="button" class="token-btn" data-token="{{company}}">{{company}}</button>
+        <button type="button" class="token-btn" data-token="{{role}}">{{role}}</button>
+        <button type="button" class="token-btn" data-token="{{contactName}}">{{contactName}}</button>
+        <button type="button" class="token-btn" data-token="{{contactFirstName}}">{{contactFirstName}}</button>
+        <button type="button" class="token-btn" data-token="{{yourName}}">{{yourName}}</button>
+      </div>
+    </div>
+    <div class="preview"><div id="previewBody"></div></div>
+  </section>
+
+  <section class="card" aria-labelledby="companies-heading">
+    <div class="card-head"><h2 id="companies-heading">Companies</h2></div>
+    <p class="card-sub">Add the people you're reaching out to, then create drafts one at a time or all at once.</p>
+    <div class="toolbar">
+      <div class="toolbar-left">
+        <button type="button" class="btn btn-secondary" id="addRowBtn">+ Add company</button>
+        <button type="button" class="btn btn-secondary" id="pasteBtn">Paste a list</button>
+        <a class="btn btn-secondary" href="https://mail.google.com/mail/u/0/#drafts" target="_blank" rel="noopener">Open Gmail drafts ↗</a>
+      </div>
+      <button type="button" class="btn btn-primary" id="bulkDraftBtn">Create drafts for pending</button>
+    </div>
+    <div class="stats" id="statsRow"></div>
+    <div style="height:14px"></div>
+    <div class="paste-panel" id="pastePanel" hidden>
+      <div class="field">
+        <label for="pasteArea">One company per line — Company, Contact name, Contact email, Role</label>
+        <textarea id="pasteArea" placeholder="Northwind Traders, Priya Shah, priya@northwind.com, Backend Engineer&#10;Globex Corp, , hiring@globex.com, Product Designer"></textarea>
+      </div>
+      <div class="paste-actions">
+        <button type="button" class="btn btn-primary btn-sm" id="pasteAddBtn">Add rows</button>
+        <button type="button" class="btn btn-secondary btn-sm" id="pasteCancelBtn">Cancel</button>
+      </div>
+    </div>
+    <div id="tableArea"></div>
+  </section>
+
+  <p class="foot-note">Your CV, template, and company list are stored in Letterhead's database so you can pick up where you left off — only your signed-in account can read them. Drafts land in your Gmail Drafts folder; nothing is sent until you open one and hit send.</p>
+</main>
+
+<script>
+(function () {
+  "use strict";
+
+  var SUPABASE_URL = "https://bsyhpyvowajbfpiyeinp.supabase.co";
+  var SUPABASE_KEY = "sb_publishable_R1TFMZtwxIV78fdWNuibhw_01ZwJ5LB";
+  var GMAIL_SCOPE = "https://www.googleapis.com/auth/gmail.compose";
+  var sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+  var state = {
+    session: null,
+    companies: [],
+    template: { subject: "", body: "", your_name: "" },
+    cv: null,
+    saving: false
+  };
+  var saveTimer = null;
+
+  // ---------------- utilities ----------------
+  function escapeHtml(str) {
+    return String(str == null ? "" : str).replace(/[&<>"']/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+    });
+  }
+  function formatBytes(n) {
+    if (!n && n !== 0) return "";
+    if (n < 1024) return n + " B";
+    if (n < 1024 * 1024) return (n / 1024).toFixed(1) + " KB";
+    return (n / (1024 * 1024)).toFixed(1) + " MB";
+  }
+  function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+
+  function mergeTemplate(row, tpl) {
+    var firstName = (row.contact_name || "").trim().split(/\s+/)[0] || "there";
+    function sub(s) {
+      return String(s || "")
+        .replace(/\{\{company\}\}/g, row.company || "")
+        .replace(/\{\{role\}\}/g, row.role || "the role")
+        .replace(/\{\{contactFirstName\}\}/g, firstName)
+        .replace(/\{\{contactName\}\}/g, row.contact_name || "")
+        .replace(/\{\{yourName\}\}/g, tpl.your_name || "");
+    }
+    return { subject: sub(tpl.subject), body: sub(tpl.body) };
+  }
+
+  // ---------------- auth ----------------
+  function renderUserBox() {
+    var box = document.getElementById("userBox");
+    if (!state.session) { box.innerHTML = ""; return; }
+    box.innerHTML = '<span class="user-email">' + escapeHtml(state.session.user.email || "") + '</span>' +
+      '<button type="button" class="btn btn-secondary btn-sm" id="signOutBtn">Sign out</button>';
+    document.getElementById("signOutBtn").addEventListener("click", function () { sb.auth.signOut(); });
+  }
+
+  function showSignedOut() {
+    document.getElementById("signedOutView").hidden = false;
+    document.getElementById("appView").hidden = true;
+    renderUserBox();
+  }
+
+  async function showSignedIn() {
+    document.getElementById("signedOutView").hidden = true;
+    document.getElementById("appView").hidden = false;
+    renderUserBox();
+    await loadAppData();
+  }
+
+  document.getElementById("signInBtn").addEventListener("click", function () {
+    sb.auth.signInWithOAuth({
+      provider: "google",
+      options: {
+        scopes: GMAIL_SCOPE,
+        queryParams: { access_type: "offline", prompt: "consent" },
+        redirectTo: window.location.origin + window.location.pathname
+      }
+    });
+  });
+
+  sb.auth.onAuthStateChange(async function (event, session) {
+    state.session = session;
+    if (event === "SIGNED_OUT" || !session) { showSignedOut(); return; }
+    if (session.provider_refresh_token) {
+      try {
+        await sb.from("google_tokens").upsert({
+          user_id: session.user.id,
+          refresh_token: session.provider_refresh_token,
+          updated_at: new Date().toISOString()
+        });
+      } catch (e) { /* best effort */ }
+    }
+    showSignedIn();
+  });
+
+  sb.auth.getSession().then(function (res) {
+    state.session = res.data.session;
+    if (state.session) showSignedIn(); else showSignedOut();
+  });
+
+  // ---------------- data loading ----------------
+  async function loadAppData() {
+    var uid = state.session.user.id;
+    var tplRes = await sb.from("templates").select("*").eq("user_id", uid).maybeSingle();
+    var cvRes = await sb.from("cv_files").select("*").eq("user_id", uid).maybeSingle();
+    var companiesRes = await sb.from("companies").select("*").eq("user_id", uid).order("created_at", { ascending: true });
+
+    state.template = (tplRes.data) || { subject: "", body: "", your_name: "" };
+    state.cv = cvRes.data || null;
+    state.companies = companiesRes.data || [];
+
+    render();
+  }
+
+  // ---------------- persistence ----------------
+  function scheduleSaveTemplate() {
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(saveTemplateNow, 900);
+  }
+  async function saveTemplateNow() {
+    clearTimeout(saveTimer);
+    var uid = state.session.user.id;
+    await sb.from("templates").upsert({
+      user_id: uid,
+      subject: state.template.subject,
+      body: state.template.body,
+      your_name: state.template.your_name,
+      updated_at: new Date().toISOString()
+    });
+  }
+
+  async function saveCv(file) {
+    var uid = state.session.user.id;
+    var path = uid + "/" + Date.now() + "_" + file.name;
+    var upload = await sb.storage.from("cv-files").upload(path, file, { upsert: true, contentType: file.type || "application/octet-stream" });
+    if (upload.error) return false;
+
+    if (state.cv && state.cv.storage_path && state.cv.storage_path !== path) {
+      sb.storage.from("cv-files").remove([state.cv.storage_path]).catch(function () {});
+    }
+
+    var meta = { user_id: uid, filename: file.name, mime_type: file.type || "application/octet-stream", size: file.size, storage_path: path, uploaded_at: new Date().toISOString() };
+    var upsert = await sb.from("cv_files").upsert(meta);
+    if (upsert.error) return false;
+    state.cv = meta;
+    return true;
+  }
+
+  // ---------------- rendering ----------------
+  function render() {
+    renderCv();
+    renderTemplateFields();
+    renderPreview();
+    renderStats();
+    renderTable();
+  }
+
+  function renderCv() {
+    var chip = document.getElementById("cvChip");
+    var uploadBtn = document.getElementById("cvUploadBtn");
+    if (state.cv) {
+      chip.innerHTML = '<div class="cv-chip"><span class="cv-chip-icon">📄</span><div><div class="cv-chip-name">' + escapeHtml(state.cv.filename) + '</div><div class="cv-chip-meta">' + formatBytes(state.cv.size) + '</div></div></div>';
+      uploadBtn.textContent = "Replace file";
+    } else {
+      chip.innerHTML = '<div class="cv-empty">No CV uploaded yet.</div>';
+      uploadBtn.textContent = "Choose file";
+    }
+  }
+
+  function renderTemplateFields() {
+    var subjectEl = document.getElementById("subjectInput");
+    var bodyEl = document.getElementById("bodyInput");
+    var nameEl = document.getElementById("yourNameInput");
+    if (document.activeElement !== subjectEl) subjectEl.value = state.template.subject || "";
+    if (document.activeElement !== bodyEl) bodyEl.value = state.template.body || "";
+    if (document.activeElement !== nameEl) nameEl.value = state.template.your_name || "";
+  }
+
+  function renderPreview() {
+    var el = document.getElementById("previewBody");
+    var sample = state.companies[0];
+    if (!sample) {
+      el.innerHTML = '<div class="preview-empty">Add a company below to see how the merged email will read.</div>';
+      return;
+    }
+    var merged = mergeTemplate(sample, state.template);
+    el.innerHTML = '<div class="preview-subject">' + escapeHtml(merged.subject || "(no subject)") + '</div><div class="preview-body">' + escapeHtml(merged.body || "(empty body)") + '</div><div class="field-hint" style="margin-top:8px">Preview using ' + escapeHtml(sample.company || "your first company") + '</div>';
+  }
+
+  function renderStats() {
+    var total = state.companies.length;
+    var drafted = state.companies.filter(function (c) { return c.status === "drafted"; }).length;
+    var pending = state.companies.filter(function (c) { return c.status === "pending" || c.status === "error"; }).length;
+    document.getElementById("statsRow").innerHTML = "<span><b>" + total + "</b> total</span><span><b>" + drafted + "</b> drafted</span><span><b>" + pending + "</b> pending</span>";
+    document.getElementById("bulkDraftBtn").disabled = pending === 0 || !state.cv;
+  }
+
+  function statusPillHtml(row) {
+    if (row.status === "creating") return '<span class="status-pill creating"><span class="spin"></span> Creating…</span>';
+    if (row.status === "drafted") return '<span class="status-pill drafted">Drafted ✓</span>';
+    if (row.status === "error") return '<span class="status-pill error">Failed<span class="status-note">' + escapeHtml(row.error || "") + '</span></span>';
+    return '<span class="status-pill pending">Pending</span>';
+  }
+
+  function renderTable() {
+    var area = document.getElementById("tableArea");
+    if (state.companies.length === 0) {
+      area.innerHTML = '<div class="empty-state"><h3>No companies yet</h3><p>Add one at a time, or paste a whole list in one go.</p><button type="button" class="btn btn-primary" id="emptyAddBtn">+ Add your first company</button></div>';
+      var btn = document.getElementById("emptyAddBtn");
+      if (btn) btn.addEventListener("click", function () { addCompany(); });
+      return;
+    }
+    var rows = state.companies.map(function (row) {
+      var actionHtml;
+      if (row.status === "creating") actionHtml = '<span class="field-hint">Working…</span>';
+      else if (row.status === "drafted") actionHtml = '<button type="button" class="btn btn-secondary btn-sm" data-action="redo" data-id="' + row.id + '">Recreate</button>';
+      else actionHtml = '<button type="button" class="btn btn-primary btn-sm" data-action="draft" data-id="' + row.id + '">Create draft</button>';
+      return "<tr data-id=\"" + row.id + "\">" +
+        '<td><input type="text" data-field="company" data-id="' + row.id + '" value="' + escapeHtml(row.company) + '" placeholder="Company"></td>' +
+        '<td><input type="text" data-field="contact_name" data-id="' + row.id + '" value="' + escapeHtml(row.contact_name) + '" placeholder="Contact name"></td>' +
+        '<td class="col-email"><input type="email" data-field="contact_email" data-id="' + row.id + '" value="' + escapeHtml(row.contact_email) + '" placeholder="name@company.com"></td>' +
+        '<td><input type="text" data-field="role" data-id="' + row.id + '" value="' + escapeHtml(row.role) + '" placeholder="Role"></td>' +
+        '<td class="col-status">' + statusPillHtml(row) + "</td>" +
+        '<td class="col-actions">' + actionHtml + '<button type="button" class="btn btn-ghost btn-sm" data-action="remove" data-id="' + row.id + '" aria-label="Remove ' + escapeHtml(row.company || "row") + '">✕</button></td>' +
+        "</tr>";
+    }).join("");
+    area.innerHTML = '<div class="table-wrap"><table><thead><tr><th>Company</th><th>Contact</th><th>Email</th><th>Role</th><th class="col-status">Status</th><th class="col-actions">Action</th></tr></thead><tbody>' + rows + "</tbody></table></div>";
+  }
+
+  function renderReauthBanner(message) {
+    var banner = document.getElementById("reauthBanner");
+    if (!message) { banner.innerHTML = ""; return; }
+    banner.innerHTML = '<div class="banner">✉ ' + escapeHtml(message) + " Sign out and sign in again, making sure to click <b>Allow</b> on Google's Gmail permission screen.</div>";
+  }
+
+  // ---------------- state mutation ----------------
+  function findCompany(id) {
+    for (var i = 0; i < state.companies.length; i++) if (state.companies[i].id === id) return state.companies[i];
+    return null;
+  }
+
+  async function addCompany(partial) {
+    var uid = state.session.user.id;
+    var row = Object.assign({ user_id: uid, company: "", contact_name: "", contact_email: "", role: "", status: "pending" }, partial || {});
+    var res = await sb.from("companies").insert(row).select().single();
+    if (res.data) { state.companies.push(res.data); renderTable(); renderStats(); renderPreview(); }
+    return res.data;
+  }
+
+  async function removeCompany(id) {
+    state.companies = state.companies.filter(function (c) { return c.id !== id; });
+    renderTable(); renderStats(); renderPreview();
+    await sb.from("companies").delete().eq("id", id);
+  }
+
+  var fieldSaveTimers = {};
+  function scheduleFieldSave(id) {
+    clearTimeout(fieldSaveTimers[id]);
+    fieldSaveTimers[id] = setTimeout(function () {
+      var row = findCompany(id);
+      if (!row) return;
+      sb.from("companies").update({
+        company: row.company, contact_name: row.contact_name, contact_email: row.contact_email,
+        role: row.role, status: row.status, error: row.error, updated_at: new Date().toISOString()
+      }).eq("id", id);
+    }, 700);
+  }
+
+  async function parsePasteText(text) {
+    var lines = text.split(/\r?\n/).map(function (l) { return l.trim(); }).filter(Boolean);
+    var uid = state.session.user.id;
+    var toInsert = [];
+    lines.forEach(function (line) {
+      var parts = line.split(",").map(function (p) { return p.trim(); });
+      if (!parts[0] && !parts[2]) return;
+      toInsert.push({ user_id: uid, company: parts[0] || "", contact_name: parts[1] || "", contact_email: parts[2] || "", role: parts[3] || "", status: "pending" });
+    });
+    if (toInsert.length === 0) return 0;
+    var res = await sb.from("companies").insert(toInsert).select();
+    if (res.data) state.companies = state.companies.concat(res.data);
+    return toInsert.length;
+  }
+
+  // ---------------- draft creation ----------------
+  function describeInvokeError(err, data) {
+    if (data && data.message) return data.message;
+    if (err && err.message) return err.message;
+    return "Something went wrong creating this draft — try again.";
+  }
+
+  async function createDraftForRow(row) {
+    row.status = "creating"; row.error = null;
+    renderTable(); renderStats();
+
+    var result = await sb.functions.invoke("create-draft", { body: { companyId: row.id } });
+
+    // the edge function is the source of truth for status — refetch the row
+    var fresh = await sb.from("companies").select("*").eq("id", row.id).maybeSingle();
+    if (fresh.data) {
+      var idx = state.companies.findIndex(function (c) { return c.id === row.id; });
+      if (idx >= 0) state.companies[idx] = fresh.data;
+    } else if (result.error) {
+      row.status = "error"; row.error = describeInvokeError(result.error, result.data);
+    }
+
+    var current = findCompany(row.id);
+    var msg = (current && current.error) || "";
+    if (/reconnect|not connected|sign in again/i.test(msg)) renderReauthBanner(msg);
+
+    renderTable(); renderStats();
+    return current;
+  }
+
+  async function createPendingDrafts() {
+    var bulkBtn = document.getElementById("bulkDraftBtn");
+    bulkBtn.disabled = true;
+    var pending = state.companies.filter(function (c) { return c.status === "pending" || c.status === "error"; });
+    for (var i = 0; i < pending.length; i++) {
+      var updated = await createDraftForRow(pending[i]);
+      if (updated && updated.status === "error" && /reconnect|not connected|sign in again/i.test(updated.error || "")) break;
+      await sleep(350);
+    }
+    renderStats();
+  }
+
+  // ---------------- event wiring ----------------
+  document.getElementById("cvInput").addEventListener("change", async function (e) {
+    var file = e.target.files && e.target.files[0];
+    if (!file) return;
+    document.getElementById("cvUploadBtn").textContent = "Uploading…";
+    var ok = await saveCv(file);
+    renderCv();
+    if (!ok) alert("Couldn't save your CV — try again in a moment.");
+  });
+
+  document.getElementById("subjectInput").addEventListener("input", function (e) { state.template.subject = e.target.value; scheduleSaveTemplate(); renderPreview(); });
+  document.getElementById("bodyInput").addEventListener("input", function (e) { state.template.body = e.target.value; scheduleSaveTemplate(); renderPreview(); });
+  document.getElementById("yourNameInput").addEventListener("input", function (e) { state.template.your_name = e.target.value; scheduleSaveTemplate(); renderPreview(); });
+
+  document.querySelectorAll(".token-btn").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      var bodyEl = document.getElementById("bodyInput");
+      var token = btn.getAttribute("data-token");
+      var start = bodyEl.selectionStart || bodyEl.value.length;
+      var end = bodyEl.selectionEnd || bodyEl.value.length;
+      bodyEl.value = bodyEl.value.slice(0, start) + token + bodyEl.value.slice(end);
+      bodyEl.focus();
+      bodyEl.selectionStart = bodyEl.selectionEnd = start + token.length;
+      state.template.body = bodyEl.value; scheduleSaveTemplate(); renderPreview();
+    });
+  });
+
+  document.getElementById("addRowBtn").addEventListener("click", async function () {
+    await addCompany();
+    var last = document.querySelector('tbody tr:last-child input[data-field="company"]');
+    if (last) last.focus();
+  });
+
+  document.getElementById("pasteBtn").addEventListener("click", function () {
+    document.getElementById("pastePanel").hidden = false;
+    document.getElementById("pasteArea").focus();
+  });
+  document.getElementById("pasteCancelBtn").addEventListener("click", function () {
+    document.getElementById("pastePanel").hidden = true;
+    document.getElementById("pasteArea").value = "";
+  });
+  document.getElementById("pasteAddBtn").addEventListener("click", async function () {
+    var text = document.getElementById("pasteArea").value;
+    var added = await parsePasteText(text);
+    document.getElementById("pastePanel").hidden = true;
+    document.getElementById("pasteArea").value = "";
+    renderTable(); renderStats(); renderPreview();
+    if (added === 0) alert("Nothing to add — check the format: Company, Contact name, Contact email, Role.");
+  });
+
+  document.getElementById("bulkDraftBtn").addEventListener("click", createPendingDrafts);
+
+  document.getElementById("tableArea").addEventListener("input", function (e) {
+    var field = e.target.getAttribute && e.target.getAttribute("data-field");
+    if (!field) return;
+    var id = e.target.getAttribute("data-id");
+    var row = findCompany(id);
+    if (!row) return;
+    row[field] = e.target.value;
+    if (row.status === "error") { row.status = "pending"; row.error = null; }
+    scheduleFieldSave(id);
+    if (state.companies[0] && state.companies[0].id === id) renderPreview();
+  });
+
+  document.getElementById("tableArea").addEventListener("click", function (e) {
+    var actionEl = e.target.closest && e.target.closest("[data-action]");
+    if (!actionEl) return;
+    var action = actionEl.getAttribute("data-action");
+    var id = actionEl.getAttribute("data-id");
+    var row = findCompany(id);
+    if (!row) return;
+    if (action === "draft" || action === "redo") createDraftForRow(row);
+    else if (action === "remove") removeCompany(id);
+  });
+})();
+</script>
+</body>
+</html>
