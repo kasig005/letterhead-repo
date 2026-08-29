@@ -105,6 +105,20 @@ agent's terminal action is always a reviewable Gmail draft.
     "Default" workspace shows a blank ID in the console — create a named
     workspace to get a visible `wrkspc_…`.
 
+- **Quality gate — done (2026-08-29).** `generate-draft` now runs a
+  writer → judge loop (`0005_quality_gate.sql`; prompts in
+  `supabase/functions/generate-draft/prompts/`). Writer drafts, judge
+  (`claude-haiku-4-5`, override `ANTHROPIC_JUDGE_MODEL`) scores 0–100 vs
+  `rubric.md`, anything < 80 is rewritten with the feedback, up to 3
+  attempts. Best draft + `quality_score` / `quality_attempts` /
+  `quality_feedback` stored on the row; every pass logged to
+  `email_revisions`. A draft that never clears 80 → `status = needs_review`;
+  `create-draft` returns 409 `below_quality_bar` for such a row unless
+  called with `{ force: true }` ("Create anyway" button). New in-flight
+  statuses: `generating`, `scoring`. `index.html` shows a score badge and a
+  `needs_review` state; `createDraftForRow` skips regeneration when the row
+  already scores ≥ 80.
+
 ### Bugs fixed during setup (2026-08-29)
 
 - `0003_store_google_token_rpc.sql` — the browser cannot `upsert` into

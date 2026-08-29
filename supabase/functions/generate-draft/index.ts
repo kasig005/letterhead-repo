@@ -1,13 +1,15 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
 
-// generate-draft — Feature 1: LLM draft writing.
+// generate-draft — Feature 1 + quality gate.
 //
-// Takes { companyId }, reads that company row + the caller's template (both
-// RLS-scoped to the signed-in user), asks Claude to write a personalized cold
-// outreach subject + body, and stores the result on the company row as
-// generated_subject / generated_body / generated_at. Does NOT touch Gmail —
-// create-draft still does that, and now prefers this stored text.
+// writer -> judge loop: Claude drafts a tailored subject/body, a second Claude
+// call scores it 0-100 against prompts/rubric.md, and anything under
+// PASS_THRESHOLD is rewritten with the feedback, up to MAX_ATTEMPTS. The result
+// (best draft, score, attempts, feedback) is stored on the companies row. A
+// draft that never clears the bar leaves the row as `needs_review`; create-draft
+// refuses to push such a row to Gmail unless the caller passes { force: true }.
+// This function never touches Gmail itself.
 
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
@@ -23,46 +25,33 @@ function json(body: unknown, status = 200) {
 }
 
 const ANTHROPIC_URL = "https://api.anthropic.com/v1/messages";
-// Default per Anthropic guidance; override with the ANTHROPIC_MODEL secret
-// (e.g. "claude-sonnet-5") without redeploying.
-const DEFAULT_MODEL = "claude-opus-5";
+const MAX_ATTEMPTS = 3;
+const PASS_THRESHOLD = 80;
+// Writer: a capable model (override with ANTHROPIC_MODEL). Judge: fast + cheap;
+// a strong model isn't needed to score against an explicit rubric.
+const DEFAULT_WRITER_MODEL = "claude-opus-5";
+const DEFAULT_JUDGE_MODEL = "claude-haiku-4-5";
 
-const SYSTEM_PROMPT = [
-  "You write short, sharp cold outreach emails on behalf of a job seeker.",
-  "You are given the sender's own template as a guide to their voice, background, and intent, plus facts about the target company and contact.",
-  "Write ONE email tailored to that company and person.",
-  "",
-  "Rules:",
-  "- Plain text only. No markdown, no bullet points, no placeholder tokens like {{company}}.",
-  "- Keep the body under 150 words. Every sentence earns its place.",
-  "- Open with something specific to this company or role, not a generic hook.",
-  "- Keep the sender's voice and any concrete claims from the template. Do not invent facts about the sender, the company, or the person.",
-  "- One clear ask. Mention that a CV is attached (it is attached separately — do not write it out).",
-  "- End with the sender's name on its own line.",
-  "",
-  'Reply with ONLY a JSON object, no prose around it: {"subject": "...", "body": "..."}',
-].join("\n");
+const WRITING_GUIDE = await Deno.readTextFile(new URL("./prompts/writing-guide.md", import.meta.url));
+const RUBRIC = await Deno.readTextFile(new URL("./prompts/rubric.md", import.meta.url));
 
 function extractText(msg: any): string {
   if (!msg || !Array.isArray(msg.content)) return "";
-  const block = msg.content.find((b: any) => b && b.type === "text");
-  return block ? String(block.text || "") : "";
+  return msg.content
+    .filter((b: any) => b && b.type === "text")
+    .map((b: any) => b.text || "")
+    .join("");
 }
 
-function parseDraftJson(text: string): { subject: string; body: string } | null {
+function parseJsonLoose(text: string): any {
   let t = (text || "").trim();
-  // tolerate ```json fences or stray prose around the object
   const fence = t.match(/```(?:json)?\s*([\s\S]*?)```/i);
   if (fence) t = fence[1].trim();
   const start = t.indexOf("{");
   const end = t.lastIndexOf("}");
   if (start === -1 || end === -1 || end <= start) return null;
   try {
-    const obj = JSON.parse(t.slice(start, end + 1));
-    const subject = String(obj.subject || "").trim();
-    const body = String(obj.body || "").trim();
-    if (!body) return null;
-    return { subject, body };
+    return JSON.parse(t.slice(start, end + 1));
   } catch {
     return null;
   }
@@ -76,7 +65,8 @@ Deno.serve(async (req: Request) => {
   const ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!;
   const ANTHROPIC_API_KEY = Deno.env.get("ANTHROPIC_API_KEY");
   const ANTHROPIC_WORKSPACE_ID = Deno.env.get("ANTHROPIC_WORKSPACE_ID");
-  const MODEL = Deno.env.get("ANTHROPIC_MODEL") || DEFAULT_MODEL;
+  const WRITER_MODEL = Deno.env.get("ANTHROPIC_MODEL") || DEFAULT_WRITER_MODEL;
+  const JUDGE_MODEL = Deno.env.get("ANTHROPIC_JUDGE_MODEL") || DEFAULT_JUDGE_MODEL;
 
   const authHeader = req.headers.get("Authorization") || "";
   const userClient = createClient(SUPABASE_URL, ANON_KEY, {
@@ -93,8 +83,8 @@ Deno.serve(async (req: Request) => {
   if (!companyId) return json({ error: "bad_request", message: "companyId is required" }, 400);
 
   if (!ANTHROPIC_API_KEY) {
-    // Not an error the user needs to see as a failure — create-draft will fall
-    // back to template merge. The client treats this as "skip generation".
+    // create-draft will fall back to template merge; the client treats this as
+    // "skip generation" rather than a hard failure.
     return json({ error: "not_configured", message: "ANTHROPIC_API_KEY is not set on the server" }, 400);
   }
 
@@ -106,74 +96,129 @@ Deno.serve(async (req: Request) => {
     .from("templates").select("*").eq("user_id", userId).single();
 
   const instruction = payload?.instruction ? String(payload.instruction).slice(0, 1000) : "";
-
-  const userContent = [
-    `Sender name: ${template?.your_name || "(not set)"}`,
-    "",
-    "Sender's template — subject:",
-    template?.subject || "(empty)",
-    "",
-    "Sender's template — body:",
-    template?.body || "(empty)",
-    "",
-    "Target:",
-    `- Company: ${company.company || "(unknown)"}`,
-    `- Contact name: ${company.contact_name || "(unknown)"}`,
-    `- Role / context: ${company.role || "(unknown)"}`,
-    instruction ? `\nExtra instruction from the sender: ${instruction}` : "",
-    "",
-    "Write the tailored email now.",
-  ].join("\n");
+  const senderName = template?.your_name || "the candidate";
 
   const anthropicHeaders: Record<string, string> = {
     "Content-Type": "application/json",
     "x-api-key": ANTHROPIC_API_KEY,
     "anthropic-version": "2023-06-01",
   };
-  // Identity-linked API keys require the workspace to be named explicitly.
   if (ANTHROPIC_WORKSPACE_ID) anthropicHeaders["anthropic-workspace-id"] = ANTHROPIC_WORKSPACE_ID;
 
-  let claudeRes: Response;
-  try {
-    claudeRes = await fetch(ANTHROPIC_URL, {
+  async function callClaude(model: string, system: string, userText: string, maxTokens: number, effort?: string) {
+    const body: any = {
+      model,
+      max_tokens: maxTokens,
+      system,
+      messages: [{ role: "user", content: userText }],
+    };
+    if (effort) body.output_config = { effort };
+    const res = await fetch(ANTHROPIC_URL, {
       method: "POST",
       headers: anthropicHeaders,
-      body: JSON.stringify({
-        model: MODEL,
-        max_tokens: 3000,
-        output_config: { effort: "low" },
-        system: SYSTEM_PROMPT,
-        messages: [{ role: "user", content: userContent }],
-      }),
+      body: JSON.stringify(body),
     });
-  } catch (e) {
-    return json({ error: "llm_unreachable", message: String(e) }, 502);
+    const data = await res.json().catch(() => null);
+    if (!res.ok) {
+      throw new Error(data?.error?.message || `Claude API returned ${res.status}`);
+    }
+    return { parsed: parseJsonLoose(extractText(data)), model: data?.model || model };
   }
 
-  const claudeJson = await claudeRes.json().catch(() => null);
-  if (!claudeRes.ok) {
-    const msg = claudeJson?.error?.message || `Claude API returned ${claudeRes.status}`;
-    return json({ error: "llm_error", message: msg }, 502);
+  const targetBlock = [
+    `Company: ${company.company || "(unknown)"}`,
+    `Role / context: ${company.role || "(unknown)"}`,
+    `Contact: ${company.contact_name || "(no name given)"}`,
+    `Candidate's name (sign-off): ${senderName}`,
+    "",
+    "The candidate's own template, as a guide to their voice and background —",
+    `subject: ${template?.subject || "(empty)"}`,
+    `body:\n${template?.body || "(empty)"}`,
+    instruction ? `\nExtra instruction from the candidate: ${instruction}` : "",
+  ].join("\n");
+
+  const writerSystem = `${WRITING_GUIDE}\n\nRespond with ONLY the JSON object described above. No code fences, no commentary.`;
+  const judgeSystem = `${RUBRIC}\n\nRespond with ONLY the JSON object described above. No code fences, no commentary.`;
+
+  await userClient.from("companies").update({ status: "generating", error: null }).eq("id", companyId);
+
+  try {
+    let attempt = 0;
+    let draft: { subject: string; body: string } | null = null;
+    let judged: { score: number; breakdown: Record<string, number>; feedback: string } | null = null;
+
+    while (attempt < MAX_ATTEMPTS) {
+      attempt++;
+      if (attempt > 1) {
+        await userClient.from("companies").update({ status: "generating" }).eq("id", companyId);
+      }
+
+      const writerUser = judged && draft
+        ? `${targetBlock}\n\nYour previous draft:\nSubject: ${draft.subject}\nBody:\n${draft.body}\n\nJudge feedback (fix these specific issues):\n${judged.feedback}\n\nWrite a revised draft that addresses this feedback.`
+        : `${targetBlock}\n\nWrite a first draft.`;
+
+      const w = await callClaude(WRITER_MODEL, writerSystem, writerUser, 1200, "low");
+      if (!w.parsed || !w.parsed.body) throw new Error("Writer did not return a usable draft.");
+      draft = { subject: String(w.parsed.subject || "").trim(), body: String(w.parsed.body || "").trim() };
+
+      await userClient.from("companies").update({ status: "scoring" }).eq("id", companyId);
+
+      const judgeUser = `Company: ${company.company || "(unknown)"}\nRole: ${company.role || "the role"}\n\nSubject: ${draft.subject}\n\nBody:\n${draft.body}`;
+      const j = await callClaude(JUDGE_MODEL, judgeSystem, judgeUser, 800);
+      if (!j.parsed || typeof j.parsed.score !== "number") throw new Error("Judge did not return a usable score.");
+      judged = {
+        score: Math.round(j.parsed.score),
+        breakdown: j.parsed.breakdown || {},
+        feedback: String(j.parsed.feedback || "").trim(),
+      };
+
+      // Audit row — best effort, don't fail the loop over it.
+      await userClient.from("email_revisions").insert({
+        company_id: companyId, user_id: userId, attempt,
+        subject: draft.subject, body: draft.body,
+        score: judged.score, breakdown: judged.breakdown, feedback: judged.feedback,
+      });
+
+      await userClient.from("companies").update({
+        generated_subject: draft.subject || null,
+        generated_body: draft.body,
+        generated_at: new Date().toISOString(),
+        quality_score: judged.score,
+        quality_attempts: attempt,
+        quality_feedback: judged.feedback,
+        updated_at: new Date().toISOString(),
+      }).eq("id", companyId);
+
+      if (judged.score >= PASS_THRESHOLD) break;
+    }
+
+    const passed = !!judged && judged.score >= PASS_THRESHOLD;
+
+    await userClient.from("companies").update({
+      status: passed ? "pending" : "needs_review",
+      error: passed
+        ? null
+        : `Best score ${judged?.score ?? 0}/100 after ${attempt} attempt(s) — under the ${PASS_THRESHOLD} bar.`,
+      updated_at: new Date().toISOString(),
+    }).eq("id", companyId);
+
+    return json({
+      ok: true,
+      passed,
+      score: judged?.score ?? 0,
+      attempts: attempt,
+      threshold: PASS_THRESHOLD,
+      subject: draft?.subject ?? "",
+      body: draft?.body ?? "",
+      feedback: judged?.feedback ?? "",
+      writerModel: WRITER_MODEL,
+      judgeModel: JUDGE_MODEL,
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Something went wrong writing this draft.";
+    await userClient.from("companies").update({
+      status: "error", error: message, updated_at: new Date().toISOString(),
+    }).eq("id", companyId);
+    return json({ error: "generate_failed", message }, 502);
   }
-
-  const draft = parseDraftJson(extractText(claudeJson));
-  if (!draft) {
-    return json({ error: "bad_llm_output", message: "Could not parse a draft from the model response" }, 502);
-  }
-
-  const { error: saveErr } = await userClient.from("companies").update({
-    generated_subject: draft.subject || null,
-    generated_body: draft.body,
-    generated_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
-  }).eq("id", companyId);
-  if (saveErr) return json({ error: "save_failed", message: saveErr.message }, 500);
-
-  return json({
-    ok: true,
-    subject: draft.subject,
-    body: draft.body,
-    model: claudeJson?.model || MODEL,
-    usage: claudeJson?.usage || null,
-  });
 });

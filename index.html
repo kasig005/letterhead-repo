@@ -158,6 +158,9 @@
   .status-pill.drafted { background: var(--success-bg); color: var(--success); }
   .status-pill.error { background: var(--danger-bg); color: var(--danger); }
   .status-note { display: block; font-size: 11px; color: var(--muted); margin-top: 2px; font-weight: 400; }
+  .score-badge { display: inline-block; margin-top: 3px; font-size: 11px; font-weight: 600; padding: 2px 7px; border-radius: 999px; cursor: help; }
+  .score-badge.score-ok { background: var(--success-bg); color: var(--success); }
+  .score-badge.score-low { background: var(--danger-bg); color: var(--danger); }
   .spin { display: inline-block; width: 8px; height: 8px; border-radius: 50%; border: 1.5px solid currentColor; border-top-color: transparent; animation: spin 0.7s linear infinite; }
   @keyframes spin { to { transform: rotate(360deg); } }
 
@@ -470,22 +473,43 @@
       subject = merged.subject; body = merged.body;
     }
     var label = (hasAi ? "✨ AI draft for " : "Template preview for ") + (sample.company || "your first company");
-    el.innerHTML = '<div class="preview-subject">' + escapeHtml(subject || "(no subject)") + '</div><div class="preview-body">' + escapeHtml(body || "(empty body)") + '</div><div class="field-hint" style="margin-top:8px">' + escapeHtml(label) + '</div>';
+    var scoreLine = "";
+    if (typeof sample.quality_score === "number") {
+      var passes = (sample.quality_attempts || 1) + ((sample.quality_attempts === 1) ? " pass" : " passes");
+      scoreLine = '<div class="field-hint" style="margin-top:4px">Quality score <b>' + sample.quality_score + '/100</b> after ' + passes +
+        (sample.quality_feedback ? '. Judge notes: ' + escapeHtml(sample.quality_feedback) : '') + '</div>';
+    }
+    el.innerHTML = '<div class="preview-subject">' + escapeHtml(subject || "(no subject)") + '</div><div class="preview-body">' + escapeHtml(body || "(empty body)") + '</div><div class="field-hint" style="margin-top:8px">' + escapeHtml(label) + '</div>' + scoreLine;
   }
 
   function renderStats() {
     var total = state.companies.length;
     var drafted = state.companies.filter(function (c) { return c.status === "drafted"; }).length;
     var pending = state.companies.filter(function (c) { return c.status === "pending" || c.status === "error"; }).length;
-    document.getElementById("statsRow").innerHTML = "<span><b>" + total + "</b> total</span><span><b>" + drafted + "</b> drafted</span><span><b>" + pending + "</b> pending</span>";
+    var review = state.companies.filter(function (c) { return c.status === "needs_review"; }).length;
+    document.getElementById("statsRow").innerHTML =
+      "<span><b>" + total + "</b> total</span><span><b>" + drafted + "</b> drafted</span><span><b>" + pending + "</b> pending</span>" +
+      (review ? "<span><b>" + review + "</b> needs review</span>" : "");
     document.getElementById("bulkDraftBtn").disabled = pending === 0 || !state.cv;
   }
 
+  function scoreBadgeHtml(row) {
+    if (typeof row.quality_score !== "number") return "";
+    var passes = (row.quality_attempts || 1) + (row.quality_attempts === 1 ? " pass" : " passes");
+    var cls = row.quality_score >= 80 ? "score-ok" : "score-low";
+    return '<span class="score-badge ' + cls + '" title="' + escapeHtml(row.quality_feedback || "") + '">' +
+      row.quality_score + '/100 · ' + passes + '</span>';
+  }
+
   function statusPillHtml(row) {
+    var badge = scoreBadgeHtml(row);
+    if (row.status === "generating") return '<span class="status-pill creating"><span class="spin"></span> Writing…</span>';
+    if (row.status === "scoring") return '<span class="status-pill creating"><span class="spin"></span> Scoring…</span>';
     if (row.status === "creating") return '<span class="status-pill creating"><span class="spin"></span> Creating…</span>';
-    if (row.status === "drafted") return '<span class="status-pill drafted">Drafted ✓</span>';
+    if (row.status === "drafted") return '<span class="status-pill drafted">Drafted ✓</span>' + badge;
+    if (row.status === "needs_review") return '<span class="status-pill error">Needs review<span class="status-note">' + escapeHtml(row.error || "Under the quality bar") + '</span></span>' + badge;
     if (row.status === "error") return '<span class="status-pill error">Failed<span class="status-note">' + escapeHtml(row.error || "") + '</span></span>';
-    return '<span class="status-pill pending">Pending</span>';
+    return '<span class="status-pill pending">Pending</span>' + badge;
   }
 
   function renderTable() {
@@ -505,11 +529,13 @@
       return;
     }
     var rows = state.companies.map(function (row) {
+      var busy = row.status === "creating" || row.status === "generating" || row.status === "scoring";
       var actionHtml;
-      if (row.status === "creating") actionHtml = '<span class="field-hint">Working…</span>';
+      if (busy) actionHtml = '<span class="field-hint">Working…</span>';
       else if (row.status === "drafted") actionHtml = '<button type="button" class="btn btn-secondary btn-sm" data-action="redo" data-id="' + row.id + '">Recreate</button>';
+      else if (row.status === "needs_review") actionHtml = '<button type="button" class="btn btn-secondary btn-sm" data-action="force" data-id="' + row.id + '" title="Create the Gmail draft despite the low score">Create anyway</button>';
       else actionHtml = '<button type="button" class="btn btn-primary btn-sm" data-action="draft" data-id="' + row.id + '">Create draft</button>';
-      var writeHtml = row.status === "creating" ? "" :
+      var writeHtml = busy ? "" :
         '<button type="button" class="btn btn-ghost btn-sm" data-action="write" data-id="' + row.id + '" title="Write this email with AI">' +
         (row.generated_at ? "✨ Rewrite" : "✨ Write") + '</button>';
       actionHtml = writeHtml + actionHtml;
@@ -605,61 +631,71 @@
     return { error: res.error, data: payload };
   }
 
-  // Feature 1: ask the generate-draft function to write a tailored email and
-  // stash it on the row. Returns { ok, skipped, message }.
+  // Run the writer/judge quality loop on a row. The Edge Function owns the row's
+  // status and score columns, so we refetch afterwards. Returns
+  // { ok, skipped, message, passed, score, attempts, feedback }.
   async function generateForRow(row) {
     var gen = await invokeFn("generate-draft", { companyId: row.id });
+    var fresh = await sb.from("companies").select("*").eq("id", row.id).maybeSingle();
+    if (fresh.data) {
+      var idx = state.companies.findIndex(function (c) { return c.id === row.id; });
+      if (idx >= 0) state.companies[idx] = fresh.data;
+    }
     if (gen.error) {
       if (gen.data && gen.data.error === "not_configured") return { ok: false, skipped: true };
       return { ok: false, skipped: false, message: describeInvokeError(gen.error, gen.data) };
     }
-    if (gen.data) {
-      row.generated_subject = gen.data.subject;
-      row.generated_body = gen.data.body;
-      row.generated_at = new Date().toISOString();
-    }
-    return { ok: true };
+    var d = gen.data || {};
+    return { ok: true, passed: !!d.passed, score: d.score, attempts: d.attempts, threshold: d.threshold, feedback: d.feedback };
   }
 
   async function writeDraftForRow(row) {
     await saveCompanyRow(row.id);
-    var prevStatus = row.status === "drafted" ? "drafted" : "pending";
-    row.status = "creating"; row.error = null;
+    row.status = "generating"; row.error = null;
     renderTable(); renderStats();
 
     var gen = await generateForRow(row);
-    row.status = prevStatus;
-    if (gen.ok) {
+    if (gen.skipped) {
+      alert("AI drafting isn't set up yet — add ANTHROPIC_API_KEY to the Edge Function secrets.");
+    } else if (gen.ok) {
       state.previewRowId = row.id;
-    } else if (gen.skipped) {
-      alert("AI drafting isn't set up yet. Add ANTHROPIC_API_KEY to the Edge Function secrets. \"Create draft\" still works using template merge.");
-    } else {
-      row.error = "Draft writing failed: " + (gen.message || "unknown error");
     }
-    await saveCompanyRow(row.id);
+    // On a hard failure the server already wrote status=error + message; the
+    // refetch inside generateForRow picked that up.
     renderTable(); renderStats(); renderPreview();
   }
 
-  async function createDraftForRow(row) {
+  async function createDraftForRow(row, force) {
     // Flush any not-yet-saved edits to this row before the function reads it.
     await saveCompanyRow(row.id);
-
-    row.status = "creating"; row.error = null;
+    row.status = "generating"; row.error = null;
     renderTable(); renderStats();
 
-    // Feature 1: write the email with Claude first. If the server has no API key
-    // (skipped) we proceed and create-draft falls back to template merge; a real
-    // generation failure stops here so the user isn't surprised by a worse draft.
-    var gen = await generateForRow(row);
-    if (!gen.ok && !gen.skipped) {
-      row.status = "error";
-      row.error = "Draft writing failed: " + (gen.message || "unknown error");
-      await saveCompanyRow(row.id);
-      renderTable(); renderStats();
-      return findCompany(row.id);
+    if (!force) {
+      var existing = findCompany(row.id);
+      var alreadyPassing = existing && typeof existing.quality_score === "number" &&
+        existing.quality_score >= 80 && existing.generated_body;
+      if (!alreadyPassing) {
+        var gen = await generateForRow(row);
+        if (!gen.ok && !gen.skipped) {
+          renderTable(); renderStats(); renderPreview();
+          return findCompany(row.id);
+        }
+        if (gen.ok && !gen.passed) {
+          // Below the quality bar — the server marked the row needs_review.
+          // Stop before Gmail; the user can rewrite or "Create anyway".
+          state.previewRowId = row.id;
+          renderTable(); renderStats(); renderPreview();
+          return findCompany(row.id);
+        }
+      }
     }
 
-    var result = await sb.functions.invoke("create-draft", { body: { companyId: row.id } });
+    var c0 = findCompany(row.id);
+    if (c0) c0.status = "creating";
+    renderTable(); renderStats();
+
+    var result = await sb.functions.invoke("create-draft", { body: { companyId: row.id, force: !!force } });
 
     // the edge function is the source of truth for status — refetch the row
     var fresh = await sb.from("companies").select("*").eq("id", row.id).maybeSingle();
@@ -667,14 +703,15 @@
       var idx = state.companies.findIndex(function (c) { return c.id === row.id; });
       if (idx >= 0) state.companies[idx] = fresh.data;
     } else if (result.error) {
-      row.status = "error"; row.error = describeInvokeError(result.error, result.data);
+      var ce = findCompany(row.id);
+      if (ce) { ce.status = "error"; ce.error = describeInvokeError(result.error, result.data); }
     }
 
     var current = findCompany(row.id);
     var msg = (current && current.error) || "";
     if (/reconnect|not connected|sign in again/i.test(msg)) renderReauthBanner(msg);
 
-    renderTable(); renderStats();
+    renderTable(); renderStats(); renderPreview();
     return current;
   }
 
@@ -775,6 +812,7 @@
     var row = findCompany(id);
     if (!row) return;
     if (action === "draft" || action === "redo") createDraftForRow(row);
+    else if (action === "force") createDraftForRow(row, true);
     else if (action === "write") writeDraftForRow(row);
     else if (action === "remove") removeCompany(id);
   });

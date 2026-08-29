@@ -120,6 +120,17 @@ Deno.serve(async (req: Request) => {
     return json({ error: "bad_request", message: "Missing or invalid contact email" }, 400);
   }
 
+  // Quality gate: a draft that never cleared the rubric bar (generate-draft
+  // marked it needs_review) is not pushed to Gmail unless explicitly forced.
+  const PASS_THRESHOLD = 80;
+  if (!payload?.force && typeof company.quality_score === "number" && company.quality_score < PASS_THRESHOLD) {
+    return json({
+      error: "below_quality_bar",
+      message: `This draft scored ${company.quality_score}/100, under the ${PASS_THRESHOLD} bar. Review it, rewrite it, or create it anyway.`,
+      score: company.quality_score,
+    }, 409);
+  }
+
   const { data: template } = await userClient.from("templates").select("*").eq("user_id", userId).single();
   const { data: cvMeta } = await userClient.from("cv_files").select("*").eq("user_id", userId).single();
 
