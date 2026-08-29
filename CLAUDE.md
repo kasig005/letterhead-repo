@@ -97,6 +97,13 @@ agent's terminal action is always a reviewable Gmail draft.
   secret; without it, generation is skipped and the app falls back to
   `{{token}}` template merge (so it's non-breaking). Model defaults to
   `claude-opus-5`; set the `ANTHROPIC_MODEL` secret to change it.
+  - **Gotcha:** newer console keys (platform.claude.com) are
+    *identity-linked* — the Messages API rejects them with
+    "anthropic-workspace-id is required …". Fix: set the
+    `ANTHROPIC_WORKSPACE_ID` secret (`wrkspc_…`); `generate-draft` sends it
+    as the `anthropic-workspace-id` header when present. The auto-created
+    "Default" workspace shows a blank ID in the console — create a named
+    workspace to get a visible `wrkspc_…`.
 
 ### Bugs fixed during setup (2026-08-29)
 
