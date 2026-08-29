@@ -347,19 +347,29 @@
 
   sb.auth.onAuthStateChange(async function (event, session) {
     state.session = session;
-    if (event === "SIGNED_OUT" || !session) { showSignedOut(); return; }
+    if (event === "SIGNED_OUT" || !session) { state.loaded = false; showSignedOut(); return; }
     if (session.provider_refresh_token) {
       try {
         var tokRes = await sb.rpc("store_google_token", { p_refresh_token: session.provider_refresh_token });
         if (tokRes && tokRes.error) console.error("store_google_token failed:", tokRes.error);
       } catch (e) { console.error("store_google_token threw:", e); }
     }
+    // Supabase re-fires this handler on token refresh and tab focus. Only do the
+    // full data load once — re-running it rebuilds the companies table and would
+    // wipe whatever the user is mid-way through typing into a row.
+    if (state.loaded) {
+      document.getElementById("signedOutView").hidden = true;
+      document.getElementById("appView").hidden = false;
+      renderUserBox();
+      return;
+    }
+    state.loaded = true;
     showSignedIn();
   });
 
   sb.auth.getSession().then(function (res) {
     state.session = res.data.session;
-    if (state.session) showSignedIn(); else showSignedOut();
+    if (state.session) { state.loaded = true; showSignedIn(); } else showSignedOut();
   });
 
   // ---------------- data loading ----------------
@@ -468,6 +478,14 @@
 
   function renderTable() {
     var area = document.getElementById("tableArea");
+    // Never rebuild the table out from under a cell the user is editing —
+    // innerHTML replacement destroys the input and loses unsaved keystrokes.
+    var ae = document.activeElement;
+    if (ae && ae.getAttribute && ae.getAttribute("data-field") && area.contains(ae)) {
+      pendingTableRender = true;
+      return;
+    }
+    pendingTableRender = false;
     if (state.companies.length === 0) {
       area.innerHTML = '<div class="empty-state"><h3>No companies yet</h3><p>Add one at a time, or paste a whole list in one go.</p><button type="button" class="btn btn-primary" id="emptyAddBtn">+ Add your first company</button></div>';
       var btn = document.getElementById("emptyAddBtn");
@@ -518,16 +536,24 @@
   }
 
   var fieldSaveTimers = {};
+  var pendingTableRender = false;
+
+  function saveCompanyRow(id) {
+    clearTimeout(fieldSaveTimers[id]);
+    var row = findCompany(id);
+    if (!row) return Promise.resolve();
+    return sb.from("companies").update({
+      company: row.company, contact_name: row.contact_name, contact_email: row.contact_email,
+      role: row.role, status: row.status, error: row.error, updated_at: new Date().toISOString()
+    }).eq("id", id).then(function (res) {
+      if (res && res.error) console.error("save company row failed:", res.error);
+      return res;
+    });
+  }
+
   function scheduleFieldSave(id) {
     clearTimeout(fieldSaveTimers[id]);
-    fieldSaveTimers[id] = setTimeout(function () {
-      var row = findCompany(id);
-      if (!row) return;
-      sb.from("companies").update({
-        company: row.company, contact_name: row.contact_name, contact_email: row.contact_email,
-        role: row.role, status: row.status, error: row.error, updated_at: new Date().toISOString()
-      }).eq("id", id);
-    }, 700);
+    fieldSaveTimers[id] = setTimeout(function () { saveCompanyRow(id); }, 700);
   }
 
   async function parsePasteText(text) {
@@ -553,6 +579,9 @@
   }
 
   async function createDraftForRow(row) {
+    // Flush any not-yet-saved edits to this row before the function reads it.
+    await saveCompanyRow(row.id);
+
     row.status = "creating"; row.error = null;
     renderTable(); renderStats();
 
@@ -649,6 +678,19 @@
     if (row.status === "error") { row.status = "pending"; row.error = null; }
     scheduleFieldSave(id);
     if (state.companies[0] && state.companies[0].id === id) renderPreview();
+  });
+
+  document.getElementById("tableArea").addEventListener("focusout", function (e) {
+    var field = e.target.getAttribute && e.target.getAttribute("data-field");
+    if (!field) return;
+    var id = e.target.getAttribute("data-id");
+    saveCompanyRow(id);
+    // A render deferred while this cell was focused can now run safely.
+    setTimeout(function () {
+      var ae = document.activeElement;
+      var stillEditing = ae && ae.getAttribute && ae.getAttribute("data-field");
+      if (pendingTableRender && !stillEditing) { renderTable(); renderStats(); }
+    }, 0);
   });
 
   document.getElementById("tableArea").addEventListener("click", function (e) {
