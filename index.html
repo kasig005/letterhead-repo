@@ -350,12 +350,9 @@
     if (event === "SIGNED_OUT" || !session) { showSignedOut(); return; }
     if (session.provider_refresh_token) {
       try {
-        await sb.from("google_tokens").upsert({
-          user_id: session.user.id,
-          refresh_token: session.provider_refresh_token,
-          updated_at: new Date().toISOString()
-        });
-      } catch (e) { /* best effort */ }
+        var tokRes = await sb.rpc("store_google_token", { p_refresh_token: session.provider_refresh_token });
+        if (tokRes && tokRes.error) console.error("store_google_token failed:", tokRes.error);
+      } catch (e) { console.error("store_google_token threw:", e); }
     }
     showSignedIn();
   });
