@@ -281,7 +281,8 @@
     companies: [],
     template: { subject: "", body: "", your_name: "" },
     cv: null,
-    saving: false
+    saving: false,
+    previewRowId: null
   };
   var saveTimer = null;
 
@@ -452,13 +453,24 @@
 
   function renderPreview() {
     var el = document.getElementById("previewBody");
-    var sample = state.companies[0];
+    var sample = null;
+    if (state.previewRowId) sample = findCompany(state.previewRowId);
+    if (!sample) sample = state.companies[0];
     if (!sample) {
-      el.innerHTML = '<div class="preview-empty">Add a company below to see how the merged email will read.</div>';
+      el.innerHTML = '<div class="preview-empty">Add a company below to see how the email will read.</div>';
       return;
     }
-    var merged = mergeTemplate(sample, state.template);
-    el.innerHTML = '<div class="preview-subject">' + escapeHtml(merged.subject || "(no subject)") + '</div><div class="preview-body">' + escapeHtml(merged.body || "(empty body)") + '</div><div class="field-hint" style="margin-top:8px">Preview using ' + escapeHtml(sample.company || "your first company") + '</div>';
+    var hasAi = sample.generated_body && String(sample.generated_body).trim().length > 0;
+    var subject, body;
+    if (hasAi) {
+      subject = sample.generated_subject || mergeTemplate(sample, state.template).subject;
+      body = sample.generated_body;
+    } else {
+      var merged = mergeTemplate(sample, state.template);
+      subject = merged.subject; body = merged.body;
+    }
+    var label = (hasAi ? "✨ AI draft for " : "Template preview for ") + (sample.company || "your first company");
+    el.innerHTML = '<div class="preview-subject">' + escapeHtml(subject || "(no subject)") + '</div><div class="preview-body">' + escapeHtml(body || "(empty body)") + '</div><div class="field-hint" style="margin-top:8px">' + escapeHtml(label) + '</div>';
   }
 
   function renderStats() {
@@ -497,6 +509,10 @@
       if (row.status === "creating") actionHtml = '<span class="field-hint">Working…</span>';
       else if (row.status === "drafted") actionHtml = '<button type="button" class="btn btn-secondary btn-sm" data-action="redo" data-id="' + row.id + '">Recreate</button>';
       else actionHtml = '<button type="button" class="btn btn-primary btn-sm" data-action="draft" data-id="' + row.id + '">Create draft</button>';
+      var writeHtml = row.status === "creating" ? "" :
+        '<button type="button" class="btn btn-ghost btn-sm" data-action="write" data-id="' + row.id + '" title="Write this email with AI">' +
+        (row.generated_at ? "✨ Rewrite" : "✨ Write") + '</button>';
+      actionHtml = writeHtml + actionHtml;
       return "<tr data-id=\"" + row.id + "\">" +
         '<td><input type="text" data-field="company" data-id="' + row.id + '" value="' + escapeHtml(row.company) + '" placeholder="Company"></td>' +
         '<td><input type="text" data-field="contact_name" data-id="' + row.id + '" value="' + escapeHtml(row.contact_name) + '" placeholder="Contact name"></td>' +
@@ -578,12 +594,70 @@
     return "Something went wrong creating this draft — try again.";
   }
 
+  // supabase-js returns { data:null, error } for non-2xx from an Edge Function;
+  // the JSON body lives on error.context (a Response). Pull it back out.
+  async function invokeFn(name, body) {
+    var res = await sb.functions.invoke(name, { body: body });
+    var payload = res.data;
+    if (res.error && res.error.context && typeof res.error.context.json === "function") {
+      try { payload = await res.error.context.json(); } catch (e) { /* keep null */ }
+    }
+    return { error: res.error, data: payload };
+  }
+
+  // Feature 1: ask the generate-draft function to write a tailored email and
+  // stash it on the row. Returns { ok, skipped, message }.
+  async function generateForRow(row) {
+    var gen = await invokeFn("generate-draft", { companyId: row.id });
+    if (gen.error) {
+      if (gen.data && gen.data.error === "not_configured") return { ok: false, skipped: true };
+      return { ok: false, skipped: false, message: describeInvokeError(gen.error, gen.data) };
+    }
+    if (gen.data) {
+      row.generated_subject = gen.data.subject;
+      row.generated_body = gen.data.body;
+      row.generated_at = new Date().toISOString();
+    }
+    return { ok: true };
+  }
+
+  async function writeDraftForRow(row) {
+    await saveCompanyRow(row.id);
+    var prevStatus = row.status === "drafted" ? "drafted" : "pending";
+    row.status = "creating"; row.error = null;
+    renderTable(); renderStats();
+
+    var gen = await generateForRow(row);
+    row.status = prevStatus;
+    if (gen.ok) {
+      state.previewRowId = row.id;
+    } else if (gen.skipped) {
+      alert("AI drafting isn't set up yet. Add ANTHROPIC_API_KEY to the Edge Function secrets. \"Create draft\" still works using template merge.");
+    } else {
+      row.error = "Draft writing failed: " + (gen.message || "unknown error");
+    }
+    await saveCompanyRow(row.id);
+    renderTable(); renderStats(); renderPreview();
+  }
+
   async function createDraftForRow(row) {
     // Flush any not-yet-saved edits to this row before the function reads it.
     await saveCompanyRow(row.id);
 
     row.status = "creating"; row.error = null;
     renderTable(); renderStats();
+
+    // Feature 1: write the email with Claude first. If the server has no API key
+    // (skipped) we proceed and create-draft falls back to template merge; a real
+    // generation failure stops here so the user isn't surprised by a worse draft.
+    var gen = await generateForRow(row);
+    if (!gen.ok && !gen.skipped) {
+      row.status = "error";
+      row.error = "Draft writing failed: " + (gen.message || "unknown error");
+      await saveCompanyRow(row.id);
+      renderTable(); renderStats();
+      return findCompany(row.id);
+    }
 
     var result = await sb.functions.invoke("create-draft", { body: { companyId: row.id } });
 
@@ -701,6 +775,7 @@
     var row = findCompany(id);
     if (!row) return;
     if (action === "draft" || action === "redo") createDraftForRow(row);
+    else if (action === "write") writeDraftForRow(row);
     else if (action === "remove") removeCompany(id);
   });
 })();

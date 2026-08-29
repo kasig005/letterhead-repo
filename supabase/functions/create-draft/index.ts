@@ -160,11 +160,21 @@ Deno.serve(async (req: Request) => {
     const cvBytes = new Uint8Array(await cvBlob.arrayBuffer());
     const cvBase64 = bytesToBase64(cvBytes);
 
-    const merged = mergeTemplate(company, template || {});
+    // Prefer an LLM-generated draft (Feature 1, written by the generate-draft
+    // function) when the row has one; otherwise fall back to naive token merge.
+    const fallback = mergeTemplate(company, template || {});
+    const hasGenerated = typeof company.generated_body === "string" && company.generated_body.trim().length > 0;
+    const finalSubject = hasGenerated
+      ? (company.generated_subject && company.generated_subject.trim().length > 0
+          ? company.generated_subject
+          : fallback.subject)
+      : fallback.subject;
+    const finalBody = hasGenerated ? company.generated_body : fallback.body;
+
     const mime = buildMimeMessage({
       to: company.contact_email,
-      subject: merged.subject,
-      body: merged.body,
+      subject: finalSubject,
+      body: finalBody,
       attachment: { filename: cvMeta.filename, mimeType: cvMeta.mime_type, base64: cvBase64 },
     });
     const rawMessage = toBase64Url(bytesToBase64(new TextEncoder().encode(mime)));

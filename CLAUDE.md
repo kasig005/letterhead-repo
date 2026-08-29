@@ -28,7 +28,16 @@ review always happens in Gmail itself.
   stored Google refresh token (service-role only, RLS blocks the client from
   reading it back), exchanges it for an access token, builds the MIME
   message with the CV attached, and calls the Gmail API to create a draft in
-  *that user's* account.
+  *that user's* account. Uses the row's `generated_subject`/`generated_body`
+  (from `generate-draft`) when present; otherwise falls back to naive
+  `{{token}}` merge of the template.
+- **`supabase/functions/generate-draft/index.ts`** — agentic layer, Feature 1.
+  Verifies the caller's JWT, reads their `companies` row + `templates` row
+  (RLS-scoped), calls the Claude Messages API (`ANTHROPIC_API_KEY` secret;
+  model `claude-opus-5`, override via `ANTHROPIC_MODEL` secret) to write a
+  tailored subject + body, and stores it on the row. Never touches Gmail.
+  Returns `{error:"not_configured"}` (HTTP 400) when the key is unset; the
+  client treats that as "skip generation" so the app still works key-less.
 - **`supabase/migrations/`** — full schema, in order:
   - `0001_init_schema.sql` — `profiles`, `companies`, `templates`,
     `cv_files`, `google_tokens` tables; RLS policies scoped to
@@ -37,6 +46,10 @@ review always happens in Gmail itself.
   - `0002_cv_storage_bucket.sql` — the private `cv-files` storage bucket
     and its per-user object policies (folder-per-user convention: objects
     live at `<user_id>/<filename>`).
+  - `0003_store_google_token_rpc.sql` — `store_google_token()` SECURITY
+    DEFINER function (see Status).
+  - `0004_generated_draft_columns.sql` — `generated_subject`,
+    `generated_body`, `generated_at` on `companies` for Feature 1.
 
 ## Data model
 
@@ -44,7 +57,7 @@ review always happens in Gmail itself.
 |---|---|
 | `profiles` | One row per user, auto-created on signup. |
 | `templates` | One editable subject/body/sign-off per user. |
-| `companies` | Each user's outreach list and per-row draft status (`pending` / `creating` / `drafted` / `error`). |
+| `companies` | Each user's outreach list, per-row draft status (`pending` / `creating` / `drafted` / `error`), and the LLM-written `generated_subject` / `generated_body` / `generated_at`. |
 | `cv_files` | Metadata for the CV in the `cv-files` bucket. |
 | `google_tokens` | Refresh tokens — insert/update only for the owning user, no select policy at all for client roles. Only the service role (inside the Edge Function) can read it. |
 
@@ -65,8 +78,25 @@ draft was created in Gmail Drafts (`companies.status` → `drafted`).
 - Supabase: Google Auth provider enabled; `GOOGLE_CLIENT_ID` /
   `GOOGLE_CLIENT_SECRET` set as Edge Function secrets; **Site URL** set to
   the Cloudflare URL and added to Redirect URLs.
-- Schema: migrations `0001`–`0003` applied (`0003` added
-  `store_google_token()` — see below).
+- Schema: migrations `0001`–`0004` applied (`0003` added
+  `store_google_token()` — see below; `0004` added the generated-draft
+  columns).
+
+### Agentic layer (in progress)
+
+Being built feature by feature on top of the working draft pipeline. Planned
+order: **1. LLM draft writing** → 2. per-contact research/enrichment →
+3. in-app draft review & revision loop → 4. prospect finding →
+5. chat-driven campaign agent. Nothing sends automatically at any stage; the
+agent's terminal action is always a reviewable Gmail draft.
+
+- **Feature 1 — done (2026-08-29).** `generate-draft` Edge Function +
+  `0004` columns + `index.html` wiring. Each row gets a per-row **✨ Write**
+  button (generate only, updates the preview panel) and **Create draft**
+  now runs generate → create. Needs `ANTHROPIC_API_KEY` as an Edge Function
+  secret; without it, generation is skipped and the app falls back to
+  `{{token}}` template merge (so it's non-breaking). Model defaults to
+  `claude-opus-5`; set the `ANTHROPIC_MODEL` secret to change it.
 
 ### Bugs fixed during setup (2026-08-29)
 
