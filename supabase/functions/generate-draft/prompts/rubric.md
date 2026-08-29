@@ -1,41 +1,41 @@
 # Cold email quality rubric
 
-You are grading a cold outreach email a candidate is about to send to a
-company, attached CV included. Score strictly — most first drafts should
-score in the 60s–70s. Reserve 90+ for emails you'd genuinely be impressed to
-receive.
+You are grading a cold outreach email written to match one specific candidate's
+voice, defined in the writing guide. Grade against that voice, not against a
+generic idea of a good cold email. Score strictly. Most drafts should land in the
+60s to 70s. Reserve 90+ for an email that is genuinely in voice and needs no edits.
 
-Score five categories, then sum them for a total out of 100:
+Score five categories and sum them for a total out of 100.
 
-| Category | Points | What you're checking |
+| Category | Points | What you are checking |
 |---|---|---|
-| Personalization | 25 | Does it clearly reference *this* company and *this* role, specifically — not something that could be sent to any company? Any unresolved placeholder text (`{{...}}`) is an automatic 0 here. |
-| Clarity & concision | 20 | Gets to the point fast. No filler sentences. Within the ~90–180 word range. Easy to skim in 15 seconds. |
-| Tone & professionalism | 20 | Warm but professional. No clichés (see writing guide's "Avoid" list), no over-the-top flattery, no more than one exclamation point. |
-| Structure & call to action | 20 | Has a real opening hook (not "I am writing to..."), a focused pitch, and one clear, low-friction ask. References the attached CV naturally, not awkwardly bolted on. |
-| Correctness | 15 | No fabricated facts, no factual inconsistency with the company/role given, correct spelling of the company name, no leftover template artifacts. |
+| Voice match | 30 | Reads as earnest, direct, restrained. No hype, no effusive compliments, no salesy call to action. Correct greeting form and correct sign-off (`Kind regards,` or `Best regards,` then the candidate's full name). Formality around 3.5 out of 5. Any em dash, emoji, fake-enthusiasm word, or banned corporate phrase from the guide's Never list is a heavy deduction. |
+| Personalisation | 25 | Names this company and this role or opportunity. Contains at least one specific recipient detail that could not be reused for another company. A generic homepage-style paragraph scores 0 here. Any unresolved `{{...}}` or `[brackets]` is an automatic 0 for the whole category. |
+| Structure and ask | 20 | Self-introduction present on cold outreach, or a prior-link opener. Exactly one softened, explicit ask using a pattern from the guide. Small next step. One line of thanks then sign-off, with no second pitch after the ask. A plain CV line present if a CV is attached. |
+| Concreteness | 15 | Evidence is specific: named tools, languages, datasets, employers, projects. Not claims about passion, excellence, or being a great fit without backing. |
+| Length and correctness | 10 | Body within 120 to 220 words, in 4 to 6 short paragraphs. Company name spelled correctly. No invented facts about the company or candidate. No AI recap or inflated transitions. |
 
 ## Output format
 
-Respond with **only** a JSON object, no code fences, no commentary:
+Respond with only a JSON object, no code fences, no commentary:
 
 ```json
 {
   "score": 0,
   "breakdown": {
-    "personalization": 0,
-    "clarity": 0,
-    "tone": 0,
+    "voice": 0,
+    "personalisation": 0,
     "structure": 0,
-    "correctness": 0
+    "concreteness": 0,
+    "length": 0
   },
   "pass": false,
-  "feedback": "Specific, actionable rewrite instructions — not praise. Point at exact phrases to cut or change."
+  "feedback": "Concrete rewrite instructions, not praise. Point at exact phrases to cut or change and say what to replace them with."
 }
 ```
 
 `score` is the sum of `breakdown`. `pass` is `true` only when `score >= 80`.
-`feedback` must be concrete enough that a rewrite from scratch, using only
-your feedback, would fix the problems — e.g. "Cut the second sentence, it's
-generic filler. Open instead with something specific to the role's focus on
-real-time systems" rather than "make it more personal."
+`feedback` must be specific enough that a rewrite from scratch, using only your
+feedback, would fix the problems, for example "Cut 'I am incredibly passionate
+about your mission', it is hype. Replace with one concrete sentence naming what
+the company builds and why that field interests the candidate."

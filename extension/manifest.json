@@ -1,0 +1,12 @@
+{
+  "manifest_version": 3,
+  "name": "Letterhead Quick Add",
+  "version": "0.1.0",
+  "description": "Grab the company, role and contact from the page you're on and drop it into Letterhead as a pending row.",
+  "permissions": ["activeTab", "scripting", "storage"],
+  "background": { "service_worker": "background.js" },
+  "action": { "default_popup": "popup.html" },
+  "externally_connectable": {
+    "matches": ["https://letterhead-repo.koolkasig19.workers.dev/*"]
+  }
+}

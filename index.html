@@ -248,6 +248,7 @@
       <div class="toolbar-left">
         <button type="button" class="btn btn-secondary" id="addRowBtn">+ Add company</button>
         <button type="button" class="btn btn-secondary" id="pasteBtn">Paste a list</button>
+        <button type="button" class="btn btn-secondary" id="quickAddBtn">Quick add from text</button>
         <a class="btn btn-secondary" href="https://mail.google.com/mail/u/0/#drafts" target="_blank" rel="noopener">Open Gmail drafts ↗</a>
       </div>
       <button type="button" class="btn btn-primary" id="bulkDraftBtn">Create drafts for pending</button>
@@ -264,6 +265,17 @@
         <button type="button" class="btn btn-secondary btn-sm" id="pasteCancelBtn">Cancel</button>
       </div>
     </div>
+    <div class="paste-panel" id="quickAddPanel" hidden>
+      <div class="field">
+        <label for="quickAddArea">Paste a job posting, team page, LinkedIn profile, or email signature — Letterhead pulls out the company, role, and contact</label>
+        <textarea id="quickAddArea" placeholder="Paste the page text here…"></textarea>
+      </div>
+      <div class="paste-actions">
+        <button type="button" class="btn btn-primary btn-sm" id="quickAddRunBtn">Extract &amp; add</button>
+        <button type="button" class="btn btn-secondary btn-sm" id="quickAddCancelBtn">Cancel</button>
+        <span class="field-hint" id="quickAddStatus"></span>
+      </div>
+    </div>
     <div id="tableArea"></div>
   </section>
 
@@ -277,6 +289,10 @@
   var SUPABASE_URL = "https://bsyhpyvowajbfpiyeinp.supabase.co";
   var SUPABASE_KEY = "sb_publishable_R1TFMZtwxIV78fdWNuibhw_01ZwJ5LB";
   var GMAIL_SCOPE = "https://www.googleapis.com/auth/gmail.compose";
+  // Quick Add browser extension. Set this to the ID chrome://extensions shows
+  // after "Load unpacked" (see extension/README.md). Left as-is, the manual
+  // paste box still works; only the one-click extension handoff is disabled.
+  var QUICKADD_EXTENSION_ID = "__FILL_ME_IN__";
   var sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
   var state = {
@@ -336,6 +352,7 @@
     document.getElementById("appView").hidden = false;
     renderUserBox();
     await loadAppData();
+    maybeRunExtensionQuickAdd();
   }
 
   document.getElementById("signInBtn").addEventListener("click", function () {
@@ -613,6 +630,84 @@
     return toInsert.length;
   }
 
+  // ---------------- quick add (extract-contact) ----------------
+  // Send raw page text to the extract-contact Edge Function, then insert one
+  // pending companies row from what it pulls out. Returns the new row, or null.
+  async function quickAddFromText(rawText) {
+    var text = String(rawText || "").trim();
+    if (!text) return null;
+    var res = await invokeFn("extract-contact", { text: text.slice(0, 20000) });
+    if (res.error) {
+      var d = res.data || {};
+      if (d.error === "not_configured") {
+        alert("Quick Add needs the ANTHROPIC_API_KEY Edge Function secret — it isn't set.");
+      } else {
+        alert(describeInvokeError(res.error, res.data) || "Couldn't read a contact from that text.");
+      }
+      return null;
+    }
+    var out = res.data || {};
+    var created = await addCompany({
+      company: out.company || "",
+      contact_name: out.contact_name || "",
+      contact_email: out.contact_email || "",
+      role: out.role || ""
+    });
+    if (!created) return null;
+
+    state.previewRowId = created.id;
+    renderPreview();
+    var tr = document.querySelector('tbody tr[data-id="' + created.id + '"]');
+    if (tr) {
+      tr.scrollIntoView({ block: "center", behavior: "smooth" });
+      var order = ["company", "contact_name", "contact_email", "role"];
+      var target = null;
+      for (var i = 0; i < order.length; i++) {
+        var inp = tr.querySelector('input[data-field="' + order[i] + '"]');
+        if (inp && !inp.value) { target = inp; break; }
+      }
+      (target || tr.querySelector('input[data-field="company"]')).focus();
+    }
+    return created;
+  }
+
+  // On ?quickadd=1 (opened by the browser extension), pull the stashed page
+  // text out of the extension and run it through quickAddFromText.
+  function maybeRunExtensionQuickAdd() {
+    var params = new URLSearchParams(window.location.search);
+    if (params.get("quickadd") !== "1") return;
+    // Drop the param immediately so a refresh doesn't re-trigger the import.
+    history.replaceState({}, "", window.location.pathname);
+
+    var panel = document.getElementById("quickAddPanel");
+    var statusEl = document.getElementById("quickAddStatus");
+    var canMessage = window.chrome && chrome.runtime && typeof chrome.runtime.sendMessage === "function";
+    if (!canMessage || !QUICKADD_EXTENSION_ID || QUICKADD_EXTENSION_ID === "__FILL_ME_IN__") {
+      panel.hidden = false;
+      statusEl.textContent = "Quick Add extension not detected — paste the page text here.";
+      document.getElementById("quickAddArea").focus();
+      return;
+    }
+    panel.hidden = false;
+    statusEl.textContent = "Importing page…";
+    chrome.runtime.sendMessage(QUICKADD_EXTENSION_ID, { type: "pullQuickAdd" }, async function (resp) {
+      if (chrome.runtime.lastError || !resp || !resp.text) {
+        statusEl.textContent = "Couldn't reach the Quick Add extension — paste the page text here.";
+        document.getElementById("quickAddArea").focus();
+        return;
+      }
+      statusEl.textContent = "Importing page…";
+      var created = await quickAddFromText(resp.text);
+      if (created) {
+        statusEl.textContent = "";
+        panel.hidden = true;
+      } else {
+        statusEl.textContent = "";
+        document.getElementById("quickAddArea").value = resp.text;
+      }
+    });
+  }
+
   // ---------------- draft creation ----------------
   function describeInvokeError(err, data) {
     if (data && data.message) return data.message;
@@ -775,6 +870,32 @@
     document.getElementById("pasteArea").value = "";
     renderTable(); renderStats(); renderPreview();
     if (added === 0) alert("Nothing to add — check the format: Company, Contact name, Contact email, Role.");
+  });
+
+  document.getElementById("quickAddBtn").addEventListener("click", function () {
+    document.getElementById("quickAddPanel").hidden = false;
+    document.getElementById("quickAddStatus").textContent = "";
+    document.getElementById("quickAddArea").focus();
+  });
+  document.getElementById("quickAddCancelBtn").addEventListener("click", function () {
+    document.getElementById("quickAddPanel").hidden = true;
+    document.getElementById("quickAddArea").value = "";
+    document.getElementById("quickAddStatus").textContent = "";
+  });
+  document.getElementById("quickAddRunBtn").addEventListener("click", async function () {
+    var btn = this;
+    var statusEl = document.getElementById("quickAddStatus");
+    var text = document.getElementById("quickAddArea").value;
+    if (!text.trim()) { statusEl.textContent = "Paste some page text first."; return; }
+    btn.disabled = true;
+    statusEl.textContent = "Extracting…";
+    var created = await quickAddFromText(text);
+    btn.disabled = false;
+    statusEl.textContent = "";
+    if (created) {
+      document.getElementById("quickAddPanel").hidden = true;
+      document.getElementById("quickAddArea").value = "";
+    }
   });
 
   document.getElementById("bulkDraftBtn").addEventListener("click", createPendingDrafts);

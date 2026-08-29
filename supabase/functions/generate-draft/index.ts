@@ -32,8 +32,161 @@ const PASS_THRESHOLD = 80;
 const DEFAULT_WRITER_MODEL = "claude-opus-5";
 const DEFAULT_JUDGE_MODEL = "claude-haiku-4-5";
 
-const WRITING_GUIDE = await Deno.readTextFile(new URL("./prompts/writing-guide.md", import.meta.url));
-const RUBRIC = await Deno.readTextFile(new URL("./prompts/rubric.md", import.meta.url));
+// Prompt text is inlined here (not read from ./prompts/*.md at runtime): the
+// Supabase deploy path used for this project does not bundle non-code asset
+// files, so a Deno.readTextFile at boot crashes the worker. The .md files in
+// ./prompts/ remain the editable source — re-inline them here if you change them.
+const WRITING_GUIDE = `# Cold email writing guide
+
+You are drafting a short cold outreach email for a job-seeking candidate, to a
+specific person at a specific company about a specific role or opportunity. A CV
+is attached separately. Do not summarise the whole CV; give just enough concrete
+evidence to earn a reply.
+
+Match the candidate's real voice, described below. This voice was reverse-engineered
+from the candidate's own sent emails. The sign-off name and any personal details
+come from the context block you are given, not from this guide.
+
+## Voice
+
+- Direct, earnest, curious, professional. Not polished, not salesy, not effusive.
+- First person throughout. Say who you are, why you are writing, and why this
+  recipient specifically.
+- Show interest with one concrete, specific reason, then connect it to the
+  candidate's own experience.
+- Restrained warmth. Use "really appreciate", "really interested", "keen",
+  "would welcome". Avoid hype.
+- Formality about 3.5 out of 5 for cold outreach.
+
+## Greeting and sign-off
+
+- Named person: \`Hi [First name],\`
+- General inbox or no name given: \`Hi,\`
+- Formal institution or team: \`Dear [Team or Name],\`
+- Default sign-off: \`Kind regards,\` then the candidate's full name on the next line.
+- Advice or networking email: \`Best regards,\` then the full name.
+- "I hope you are well." or "Hope you're well." as a short second line is in voice
+  and fine. Never "I hope this email finds you well."
+
+## Structure
+
+1. Greeting.
+2. One-line self-introduction on cold outreach: name, course and year, university,
+   and what you are asking about. If there is a prior link (an event attended, a
+   referral, an earlier conversation, a follow-up), lead with that instead.
+3. One specific reason this company or person interests you. Concrete, not a
+   paragraph that could come from their homepage.
+4. One short paragraph of concrete evidence: 1 to 3 real skills, tools, projects,
+   datasets, or past roles. Prefer nouns and examples over claims about passion
+   or excellence.
+5. One clear, softened ask. Patterns that fit the voice: "If there is any scope
+   for...", "I would welcome the chance to...", "I was wondering if you'd be open
+   to...", "Would it be possible to...", "I would be grateful if you could...".
+   Keep the next step small: a short call, brief conversation, advice, an
+   interview slot, shadowing.
+6. One line of thanks, then the sign-off. No second pitch after the ask.
+7. If a CV is attached, one plain line: "I have attached my CV for reference."
+
+## Length
+
+- Body 120 to 200 words. Hard cap 220.
+- 4 to 6 short paragraphs, 1 to 3 sentences each. No single dense block.
+
+## Contractions
+
+- Conversational sentences: "I'm", "I've", "I'd", "you're".
+- Formal or factual sentences, especially the self-introduction: "I am", "I have",
+  "I would".
+- Mixed is correct. Do not force one form throughout.
+
+## Do
+
+- Include one recipient-specific detail that proves the email is not a template.
+- State technical evidence concretely: name the languages, tools, datasets,
+  employers, projects.
+- Keep the ask polite and explicit.
+- These phrases are in voice and fine to use: "I wanted to reach out", "I am
+  writing to ask", "I was wondering", "I would welcome the chance", "I would
+  really appreciate".
+
+## Never
+
+- No em dashes. Use a comma, a full stop, or "and".
+- No emoji.
+- No more than one exclamation mark, and only if rapport clearly exists.
+- Not "I hope this email finds you well", "Dear Sir/Madam", "To whom it may concern".
+- No corporate filler: "circle back", "touch base", "leverage synergies",
+  "low-hanging fruit", "move the needle", "game-changer", "value-add",
+  "uniquely positioned", "diverse skill set".
+- No fake enthusiasm: "thrilled", "super excited", "incredibly excited",
+  "absolutely delighted", unless genuinely warranted.
+- No over-complimenting the recipient or company.
+- No homepage-style company-summary paragraph.
+- No more than one ask per email.
+- No AI recap: "In summary", "Overall", "To conclude".
+- No inflated transitions: "Furthermore", "Moreover", "Additionally", "It is worth
+  noting", where a plain sentence works.
+- Do not make every sentence the same length or every paragraph symmetrical.
+- Do not invent facts about the company, the person, or the candidate. If you were
+  not given something specific about the company, keep the interest reason about
+  the role or field, not a guess.
+- No leftover placeholder tokens (\`{{...}}\` or \`[brackets]\`) in the output.
+
+## Output format
+
+Respond with only a JSON object, no code fences, no commentary:
+
+\`\`\`json
+{"subject": "...", "body": "..."}
+\`\`\`
+
+- \`subject\` short and specific, in the style of the candidate's real subjects:
+  "Internship Enquiry - Data Science / ML Engineering", "Seeking Advice on Getting
+  Started in Property Investment". Never "Application" or "Job Inquiry".
+- \`body\` contains the full email: greeting, paragraphs, thanks, sign-off, name.
+`;
+const RUBRIC = `# Cold email quality rubric
+
+You are grading a cold outreach email written to match one specific candidate's
+voice, defined in the writing guide. Grade against that voice, not against a
+generic idea of a good cold email. Score strictly. Most drafts should land in the
+60s to 70s. Reserve 90+ for an email that is genuinely in voice and needs no edits.
+
+Score five categories and sum them for a total out of 100.
+
+| Category | Points | What you are checking |
+|---|---|---|
+| Voice match | 30 | Reads as earnest, direct, restrained. No hype, no effusive compliments, no salesy call to action. Correct greeting form and correct sign-off (\`Kind regards,\` or \`Best regards,\` then the candidate's full name). Formality around 3.5 out of 5. Any em dash, emoji, fake-enthusiasm word, or banned corporate phrase from the guide's Never list is a heavy deduction. |
+| Personalisation | 25 | Names this company and this role or opportunity. Contains at least one specific recipient detail that could not be reused for another company. A generic homepage-style paragraph scores 0 here. Any unresolved \`{{...}}\` or \`[brackets]\` is an automatic 0 for the whole category. |
+| Structure and ask | 20 | Self-introduction present on cold outreach, or a prior-link opener. Exactly one softened, explicit ask using a pattern from the guide. Small next step. One line of thanks then sign-off, with no second pitch after the ask. A plain CV line present if a CV is attached. |
+| Concreteness | 15 | Evidence is specific: named tools, languages, datasets, employers, projects. Not claims about passion, excellence, or being a great fit without backing. |
+| Length and correctness | 10 | Body within 120 to 220 words, in 4 to 6 short paragraphs. Company name spelled correctly. No invented facts about the company or candidate. No AI recap or inflated transitions. |
+
+## Output format
+
+Respond with only a JSON object, no code fences, no commentary:
+
+\`\`\`json
+{
+  "score": 0,
+  "breakdown": {
+    "voice": 0,
+    "personalisation": 0,
+    "structure": 0,
+    "concreteness": 0,
+    "length": 0
+  },
+  "pass": false,
+  "feedback": "Concrete rewrite instructions, not praise. Point at exact phrases to cut or change and say what to replace them with."
+}
+\`\`\`
+
+\`score\` is the sum of \`breakdown\`. \`pass\` is \`true\` only when \`score >= 80\`.
+\`feedback\` must be specific enough that a rewrite from scratch, using only your
+feedback, would fix the problems, for example "Cut 'I am incredibly passionate
+about your mission', it is hype. Replace with one concrete sentence naming what
+the company builds and why that field interests the candidate."
+`;
 
 function extractText(msg: any): string {
   if (!msg || !Array.isArray(msg.content)) return "";

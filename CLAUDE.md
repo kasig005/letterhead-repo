@@ -38,6 +38,17 @@ review always happens in Gmail itself.
   tailored subject + body, and stores it on the row. Never touches Gmail.
   Returns `{error:"not_configured"}` (HTTP 400) when the key is unset; the
   client treats that as "skip generation" so the app still works key-less.
+- **`supabase/functions/extract-contact/index.ts`** — Quick Add helper.
+  Verifies the caller's JWT, takes `{ text }` (raw page text, capped at
+  20k chars), makes ONE Claude Messages API call (`ANTHROPIC_API_KEY`
+  secret; model `claude-haiku-4-5`, override via `ANTHROPIC_EXTRACT_MODEL`)
+  and returns `{ ok:true, company, role, contact_name, contact_email }`
+  pulled verbatim from the text. No retry loop, no scoring, and it never
+  touches the database — the client inserts the `companies` row. Sends the
+  `anthropic-workspace-id` header when `ANTHROPIC_WORKSPACE_ID` is set (same
+  identity-linked-key gotcha as `generate-draft`). Prompt text is inlined as
+  the `EXTRACT_GUIDE` const in `index.ts`; `prompts/extract-guide.md` is the
+  editable source (re-inline by hand — the deploy path ships only `.ts`/`.js`).
 - **`supabase/migrations/`** — full schema, in order:
   - `0001_init_schema.sql` — `profiles`, `companies`, `templates`,
     `cv_files`, `google_tokens` tables; RLS policies scoped to
@@ -105,6 +116,15 @@ agent's terminal action is always a reviewable Gmail draft.
     "Default" workspace shows a blank ID in the console — create a named
     workspace to get a visible `wrkspc_…`.
 
+- **Voice-tuned prompts (2026-08-29, `generate-draft` v11).**
+  `prompts/writing-guide.md` + `prompts/rubric.md` were rewritten to match
+  the primary user's real sent-email voice (reverse-engineered via ChatGPT
+  + Gmail; source kept in `reference/voice-analysis.md`,
+  `reference/sample-emails.md`). Rubric now grades *voice match* (30 pts)
+  rather than a generic "impressive email". `reference/writing-skills/` holds
+  vendored guidance from `Varnan-Tech/opendirectory` used to tighten them.
+  Both `.md` files are still inlined into `index.ts` (see gotcha below).
+
 - **Quality gate — done (2026-08-29).** `generate-draft` now runs a
   writer → judge loop (`0005_quality_gate.sql`; prompts in
   `supabase/functions/generate-draft/prompts/`). Writer drafts, judge
@@ -118,6 +138,44 @@ agent's terminal action is always a reviewable Gmail draft.
   statuses: `generating`, `scoring`. `index.html` shows a score badge and a
   `needs_review` state; `createDraftForRow` skips regeneration when the row
   already scores ≥ 80.
+  - **Gotcha (fixed 2026-08-29):** the quality-gate version originally read
+    its prompts with `Deno.readTextFile("./prompts/*.md")` at module load.
+    The Supabase **deploy path used here (MCP `deploy_edge_function` /
+    Management API) does not bundle non-code asset files** — only `.ts`/`.js`
+    ship — so every `generate-draft` boot threw
+    `NotFound: .../prompts/writing-guide.md` and the worker died before
+    responding. The client's `sb.functions.invoke` swallowed it silently and
+    the row just stayed `pending` ("clicking Create draft does nothing").
+    Fix: the prompt text is now **inlined as string constants in
+    `index.ts`** (v10); `prompts/writing-guide.md` + `prompts/rubric.md`
+    stay in the repo as the editable source — re-inline by hand (or with a
+    script) if you edit them. If a real `supabase` CLI is ever used to
+    deploy, the `readTextFile` approach would work and could be restored.
+
+- **Quick Add / browser extension — done (2026-08-30).** Adds companies
+  from raw page text instead of hand-typing. Two pieces:
+  - `extract-contact` Edge Function (see Architecture) — `{ text }` in,
+    `{ company, role, contact_name, contact_email }` out. One Claude call,
+    `ANTHROPIC_EXTRACT_MODEL` override (default `claude-haiku-4-5`), prompt
+    inlined as `EXTRACT_GUIDE` with `prompts/extract-guide.md` as the
+    editable source. No DB writes. **No new migration** — Quick Add only
+    fills the existing `companies` columns.
+  - `index.html` — `quickAddFromText(text)` calls `extract-contact`, then
+    inserts one `pending` row via the existing `addCompany()` path and
+    focuses its first empty cell. Two entry points: a **"Quick add from
+    text"** toolbar button opening a paste panel (always works), and, on
+    `?quickadd=1`, a `chrome.runtime.sendMessage(QUICKADD_EXTENSION_ID, …)`
+    handshake that pulls stashed page text from the extension. Falls back to
+    the paste panel when the extension isn't installed / ID not set.
+    `QUICKADD_EXTENSION_ID` near the top of the `<script>` block must be set
+    to the ID `chrome://extensions` shows after Load unpacked.
+  - `extension/` — Manifest V3, `activeTab` + `scripting` + `storage`, no
+    host permissions. Popup reads `document.body.innerText`, stashes it in
+    `chrome.storage.session`, opens `LETTERHEAD_URL/?quickadd=1`. Background
+    worker hands the text to the Letterhead tab via `onMessageExternal`
+    (origin-checked) once, then clears it. `externally_connectable` matches
+    the deployed Worker URL. Holds no credentials; never calls Supabase or
+    Google. See `extension/README.md` for install steps.
 
 ### Bugs fixed during setup (2026-08-29)
 
