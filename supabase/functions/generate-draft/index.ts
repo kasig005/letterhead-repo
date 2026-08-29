@@ -75,6 +75,7 @@ Deno.serve(async (req: Request) => {
   const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
   const ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!;
   const ANTHROPIC_API_KEY = Deno.env.get("ANTHROPIC_API_KEY");
+  const ANTHROPIC_WORKSPACE_ID = Deno.env.get("ANTHROPIC_WORKSPACE_ID");
   const MODEL = Deno.env.get("ANTHROPIC_MODEL") || DEFAULT_MODEL;
 
   const authHeader = req.headers.get("Authorization") || "";
@@ -124,15 +125,19 @@ Deno.serve(async (req: Request) => {
     "Write the tailored email now.",
   ].join("\n");
 
+  const anthropicHeaders: Record<string, string> = {
+    "Content-Type": "application/json",
+    "x-api-key": ANTHROPIC_API_KEY,
+    "anthropic-version": "2023-06-01",
+  };
+  // Identity-linked API keys require the workspace to be named explicitly.
+  if (ANTHROPIC_WORKSPACE_ID) anthropicHeaders["anthropic-workspace-id"] = ANTHROPIC_WORKSPACE_ID;
+
   let claudeRes: Response;
   try {
     claudeRes = await fetch(ANTHROPIC_URL, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-key": ANTHROPIC_API_KEY,
-        "anthropic-version": "2023-06-01",
-      },
+      headers: anthropicHeaders,
       body: JSON.stringify({
         model: MODEL,
         max_tokens: 3000,
