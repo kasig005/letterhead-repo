@@ -60,8 +60,20 @@ review always happens in Gmail itself.
   `query`) about the contact and their employer. Writes them to
   `companies.research_prompts` (each `{id, topic, question, query,
   status:"suggested", selected:true}`) and returns them. It **does not run**
-  any of them — that's Stage 4 (`run-research`). Prompt inlined as
-  `RESEARCH_GUIDE`; `prompts/research-guide.md` is the editable source.
+  any of them — that's `run-research`. Prompt inlined as `RESEARCH_GUIDE`;
+  `prompts/research-guide.md` is the editable source.
+- **`supabase/functions/run-research/index.ts`** — runs the drafted research
+  prompts. Verifies the caller's JWT, reads the `companies` row, and makes
+  ONE Claude call with the server-side **web_search** tool
+  (`ANTHROPIC_RESEARCH_RUN_MODEL` || `claude-sonnet-5`; `web_search_20260209`
+  for Sonnet 4.6+/Opus 4.6+ models, basic `web_search_20250305` otherwise;
+  `max_uses` 5; `pause_turn` continuation loop). Marks the targeted prompts
+  `status:"running"`, then writes each back with `status:"done"`, `answer`,
+  `sources[]`, `ran_at`, and a synthesis onto `companies.research_notes`. On
+  failure it rolls the prompts back off `running`. Costs real API credits +
+  web-search usage — the client only calls it on an explicit click (with a
+  `confirm()`). Prompt inlined as `RUN_GUIDE`; `prompts/run-guide.md` is the
+  editable source.
 - **`supabase/migrations/`** — full schema, in order:
   - `0001_init_schema.sql` — `profiles`, `companies`, `templates`,
     `cv_files`, `google_tokens` tables; RLS policies scoped to
@@ -186,10 +198,12 @@ agent's terminal action is always a reviewable Gmail draft.
      Companies card lists them with checkboxes (persisted per row) and a
      "Suggest research" / "Regenerate" button. The "Run selected" button is
      present but disabled until Stage 4. Nothing runs.
-  4. **Run research on demand — planned.** "Run selected/all" on the web
-     calls `run-research`, which executes those prompts with Claude's
-     web-search tool and stores findings + `research_notes`. Gated, costs
-     money, user-triggered only.
+  4. **Run research on demand — done (2026-08-30).** `run-research` executes
+     the selected prompts with Claude's web-search tool and stores per-prompt
+     `answer`/`sources` + a `research_notes` synthesis. The `#researchPanel`
+     "Run selected (N)" button (with a `confirm()`) triggers it; per-prompt
+     status shows suggested → running → done with answers + source links, and
+     the notes render below. Gated, costs money, user-triggered only.
   5. **Channel-aware drafting — planned.** `generate-draft` gains
      `email`/`linkedin` modes, folds `source_profile` + `research_notes`
      into the prompt, emits `generated_linkedin` (short no-subject DM, Copy

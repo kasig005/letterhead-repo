@@ -148,6 +148,8 @@
   .research-topic { display: inline-block; font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; padding: 1px 6px; border-radius: 4px; margin-right: 7px; background: var(--accent-soft); color: var(--accent); vertical-align: 1px; }
   .research-topic.person { background: var(--warning-bg); color: var(--warning); }
   .research-query { font-family: "IBM Plex Mono", monospace; font-size: 11px; color: var(--muted); margin-top: 2px; }
+  .research-answer { font-size: 12.5px; color: var(--ink-soft); margin-top: 4px; padding-left: 10px; border-left: 2px solid var(--line); }
+  .research-notes { margin: 12px 0 4px; padding: 10px 12px; background: var(--accent-soft); border-radius: 8px; font-size: 12.5px; color: var(--ink-soft); }
 
   .table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; }
   table { width: 100%; border-collapse: collapse; min-width: 720px; }
@@ -751,7 +753,7 @@
     });
   }
 
-  // ---------------- staged research (suggest-research) ----------------
+  // ---------------- staged research (suggest-research / run-research) ----------------
   // The row the research panel tracks — the previewed row, else the first.
   function researchRow() {
     var row = state.previewRowId ? findCompany(state.previewRowId) : null;
@@ -766,6 +768,7 @@
     var prompts = Array.isArray(row.research_prompts) ? row.research_prompts : [];
     var who = escapeHtml([row.contact_name, row.company].filter(Boolean).join(" · ") || "this contact");
     var busy = row.researchBusy === true;
+    var running = row.researchRunning === true || prompts.some(function (p) { return p.status === "running"; });
 
     if (prompts.length === 0) {
       panel.hidden = false;
@@ -779,24 +782,45 @@
 
     var items = prompts.map(function (p, i) {
       var topicCls = p.topic === "person" ? "research-topic person" : "research-topic";
+      var answerHtml = "";
+      if (p.status === "running") {
+        answerHtml = '<div class="research-answer field-hint"><span class="spin"></span> Looking…</div>';
+      } else if (p.status === "done") {
+        var srcs = Array.isArray(p.sources) ? p.sources.filter(Boolean) : [];
+        var srcHtml = srcs.length
+          ? '<div class="research-query">' + srcs.map(function (u) {
+              return '<a href="' + escapeHtml(u) + '" target="_blank" rel="noopener">source</a>';
+            }).join(" · ") + '</div>'
+          : "";
+        answerHtml = '<div class="research-answer">' + escapeHtml(p.answer || "(no answer found)") + srcHtml + '</div>';
+      }
       return '<label class="research-item">' +
-        '<input type="checkbox" data-research="toggle" data-idx="' + i + '"' + (p.selected === false ? "" : " checked") + '>' +
+        '<input type="checkbox" data-research="toggle" data-idx="' + i + '"' +
+        (p.selected === false ? "" : " checked") + (running ? " disabled" : "") + '>' +
         '<span class="research-q"><span class="' + topicCls + '">' + escapeHtml(p.topic || "company") + '</span>' +
         escapeHtml(p.question || "") +
         (p.query ? '<div class="research-query">↳ ' + escapeHtml(p.query) + '</div>' : '') +
+        answerHtml +
         '</span></label>';
     }).join("");
 
     var selectedCount = prompts.filter(function (p) { return p.selected !== false; }).length;
+    var notesHtml = row.research_notes
+      ? '<div class="research-notes"><b>Notes for the draft</b><br>' + escapeHtml(row.research_notes) + '</div>'
+      : "";
+
     panel.hidden = false;
     panel.innerHTML =
       '<div class="research-head"><h3>Research — ' + who + '</h3>' +
       '<span class="field-hint">' + selectedCount + ' of ' + prompts.length + ' selected</span></div>' +
-      items +
+      items + notesHtml +
       '<div class="paste-actions">' +
-      '<button type="button" class="btn btn-primary btn-sm" data-research="run" disabled title="Runs the selected lookups — arriving in the next update">Run selected</button>' +
-      '<button type="button" class="btn btn-secondary btn-sm" data-research="suggest"' + (busy ? " disabled" : "") + '>' +
-      (busy ? "Thinking…" : "Regenerate") + '</button>' +
+      '<button type="button" class="btn btn-primary btn-sm" data-research="run"' +
+      ((running || selectedCount === 0) ? " disabled" : "") + '>' +
+      (running ? "Researching…" : "Run selected (" + selectedCount + ")") + '</button>' +
+      '<button type="button" class="btn btn-secondary btn-sm" data-research="suggest"' +
+      ((busy || running) ? " disabled" : "") + '>' + (busy ? "Thinking…" : "Regenerate") + '</button>' +
+      '<span class="field-hint">Uses the web · costs API credits</span>' +
       '</div>';
   }
 
@@ -822,6 +846,32 @@
     renderResearch();
   }
 
+  async function runResearchForRow(row) {
+    if (!row || !Array.isArray(row.research_prompts)) return;
+    var selected = row.research_prompts.filter(function (p) { return p.selected !== false; });
+    if (selected.length === 0) return;
+    if (!confirm("Run " + selected.length + " web " + (selected.length === 1 ? "lookup" : "lookups") +
+      " for " + (row.contact_name || row.company || "this contact") + "?\n\nThis searches the web and uses API credits.")) return;
+
+    row.researchRunning = true;
+    renderResearch();
+    var res = await invokeFn("run-research", { companyId: row.id, promptIds: selected.map(function (p) { return p.id; }) });
+    row.researchRunning = false;
+    if (res.error) {
+      var d = res.data || {};
+      if (d.error !== "not_configured") {
+        alert(describeInvokeError(res.error, res.data) || "The research run didn't finish.");
+      }
+    }
+    var fresh = await sb.from("companies").select("*").eq("id", row.id).maybeSingle();
+    if (fresh.data) {
+      var idx = state.companies.findIndex(function (c) { return c.id === row.id; });
+      if (idx >= 0) state.companies[idx] = fresh.data;
+    }
+    if (state.previewRowId === row.id) renderPreview();
+    renderResearch();
+  }
+
   function saveResearchPrompts(id) {
     var row = findCompany(id);
     if (!row) return;
@@ -833,8 +883,10 @@
 
   document.getElementById("researchPanel").addEventListener("click", function (e) {
     var el = e.target.closest && e.target.closest("[data-research]");
-    if (!el || el.getAttribute("data-research") !== "suggest") return;
-    suggestResearchForRow(researchRow());
+    if (!el) return;
+    var kind = el.getAttribute("data-research");
+    if (kind === "suggest") suggestResearchForRow(researchRow());
+    else if (kind === "run") runResearchForRow(researchRow());
   });
 
   document.getElementById("researchPanel").addEventListener("change", function (e) {
