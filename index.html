@@ -152,6 +152,7 @@
   .research-notes { margin: 12px 0 4px; padding: 10px 12px; background: var(--accent-soft); border-radius: 8px; font-size: 12.5px; color: var(--ink-soft); }
 
   #traceOverlay { position: fixed; inset: 0; z-index: 50; background: color-mix(in srgb, var(--ink) 55%, transparent); display: flex; align-items: flex-start; justify-content: center; padding: 5vh 16px; overflow-y: auto; }
+  #traceOverlay[hidden] { display: none; }
   .trace-card { background: var(--paper-raised); border: 1px solid var(--line); border-radius: 14px; box-shadow: var(--shadow); width: 100%; max-width: 720px; padding: 20px 22px 26px; }
   .trace-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 4px; }
   .trace-head h2 { font-size: 18px; }
