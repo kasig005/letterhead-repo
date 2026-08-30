@@ -369,7 +369,9 @@ Deno.serve(async (req: Request) => {
     .from("cv_files").select("cv_text").eq("user_id", userId).maybeSingle();
   const cvText = cvRow?.cv_text ? String(cvRow.cv_text).slice(0, 5000) : "";
 
-  const instruction = payload?.instruction ? String(payload.instruction).slice(0, 1000) : "";
+  // The per-contact "brief" (companies.intent) is the default steer; an
+  // explicit payload.instruction overrides it for a one-off.
+  const instruction = String(payload?.instruction || company.intent || "").slice(0, 1000);
   const senderName = template?.your_name || "the candidate";
   const channel = (payload?.channel || company.channel) === "linkedin" ? "linkedin" : "email";
 
@@ -410,7 +412,7 @@ Deno.serve(async (req: Request) => {
     "The candidate's own template, as a guide to their voice and background —",
     `subject: ${template?.subject || "(empty)"}`,
     `body:\n${template?.body || "(empty)"}`,
-    instruction ? `\nExtra instruction from the candidate: ${instruction}` : "",
+    instruction ? `\nWhat this outreach is about (follow this closely, shape the whole message around it): ${instruction}` : "",
   ].join("\n")
     + (cvText ? `\n\nThe candidate's CV (their real experience — take any specific evidence from here):\n${cvText}` : "")
     + profileAndResearchBlock(company);

@@ -38,7 +38,10 @@ review always happens in Gmail itself.
   loop against the Claude Messages API (`ANTHROPIC_API_KEY` secret; writer
   `claude-opus-5` / `ANTHROPIC_MODEL`, judge `claude-haiku-4-5` /
   `ANTHROPIC_JUDGE_MODEL`), and stores the best draft + `quality_*` on the
-  row. Never touches Gmail. Takes `{ companyId, channel?, instruction? }`:
+  row. Never touches Gmail. Takes `{ companyId, channel?, instruction? }` —
+  `instruction` falls back to the row's `companies.intent` ("brief") when not
+  passed and is woven in as "What this outreach is about (follow this
+  closely…)".
   `channel:"email"` (default, or `company.channel`) → `LINKEDIN_GUIDE`-free
   email into `generated_subject`/`generated_body`; `channel:"linkedin"` →
   a short no-subject DM (`LINKEDIN_GUIDE` + `LINKEDIN_RUBRIC`) into
@@ -112,6 +115,9 @@ review always happens in Gmail itself.
     `generate-draft`.
   - `0008_generation_trace.sql` — `generation_trace` (jsonb) on `companies`;
     per-row record of what the writer drew on, for the review portal.
+  - `0009_row_intent.sql` — `intent` (text) on `companies`; the per-contact
+    "brief" (e.g. "email about a summer internship"), captured in Quick Add /
+    editable in-app, used as the `generate-draft` `instruction`.
 
 ## Data model
 
@@ -244,6 +250,15 @@ agent's terminal action is always a reviewable Gmail draft.
   sources under `prompts/` updated to match (LinkedIn guide/rubric live only
   in `index.ts`).
 
+- **Per-contact brief — done (2026-08-30, `generate-draft` v16, migration
+  `0009`).** A short free-text steer ("email about a summer internship",
+  "message about a coffee chat"). Captured in the Quick Add extension popup
+  (`intent` field, remembered via `chrome.storage.local`) and the paste
+  panel; stored as `companies.intent`; editable in-app via the "Brief for
+  the AI" input under the preview (`#briefBar`, debounced save). `index.html`
+  `generateForRow` passes it as `instruction`; the function also reads
+  `company.intent` server-side as the fallback, so it applies on every
+  rewrite. Shows up in the review portal's "what it drew on".
 - **"How it was made" review portal — done (2026-08-30, `generate-draft`
   v15 + migration `0008`).** Each row with a draft gets an `ⓘ` action that
   opens a modal (`#traceOverlay`): summary (channel, writer/judge models,

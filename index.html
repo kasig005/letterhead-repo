@@ -126,6 +126,9 @@
   .token-btn:hover { filter: brightness(1.1); }
 
   .preview { margin-top: 16px; border-top: 1px dashed var(--line); padding-top: 16px; }
+  #briefBar { display: flex; align-items: center; gap: 8px; margin-top: 12px; }
+  #briefBar label { font-size: 12px; font-weight: 600; color: var(--ink-soft); flex: none; }
+  #briefBar input { flex: 1; }
   .preview-subject { font-weight: 600; margin-bottom: 8px; }
   .preview-body { white-space: pre-wrap; color: var(--ink-soft); font-size: 14px; }
   .preview-empty { color: var(--muted); font-size: 13.5px; }
@@ -270,7 +273,7 @@
         <button type="button" class="token-btn" data-token="{{yourName}}">{{yourName}}</button>
       </div>
     </div>
-    <div class="preview"><div id="previewBody"></div></div>
+    <div class="preview"><div id="previewBody"></div><div id="briefBar" hidden></div></div>
   </section>
 
   <section class="card" aria-labelledby="companies-heading">
@@ -305,6 +308,10 @@
       <label class="field-hint" style="display:flex;align-items:center;gap:6px;cursor:pointer;margin-bottom:10px">
         <input type="checkbox" id="quickAddIsLinkedIn" style="width:auto"> This is a LinkedIn profile (capture the full profile for drafting)
       </label>
+      <div class="field" style="margin-bottom:10px">
+        <label for="quickAddIntent">What's it about? (optional) — steers the draft</label>
+        <input type="text" id="quickAddIntent" placeholder="e.g. email about a summer internship" maxlength="300" />
+      </div>
       <div class="paste-actions">
         <button type="button" class="btn btn-primary btn-sm" id="quickAddRunBtn">Extract &amp; add</button>
         <button type="button" class="btn btn-secondary btn-sm" id="quickAddCancelBtn">Cancel</button>
@@ -618,7 +625,21 @@
     }
     var subjectHtml = isLinkedIn ? "" : '<div class="preview-subject">' + escapeHtml(subject || "(no subject)") + '</div>';
     el.innerHTML = subjectHtml + '<div class="preview-body">' + escapeHtml(body || "(empty body)") + '</div><div class="field-hint" style="margin-top:8px">' + escapeHtml(label) + '</div>' + scoreLine + profileLine;
+    renderBrief();
     renderResearch();
+  }
+
+  // A short per-contact "brief" that steers the draft (extension / paste panel
+  // capture it; editable here). Passed to generate-draft as the instruction.
+  function renderBrief() {
+    var bar = document.getElementById("briefBar");
+    if (document.activeElement && document.activeElement.id === "briefInput") return;
+    var row = state.previewRowId ? findCompany(state.previewRowId) : state.companies[0];
+    if (!row) { bar.hidden = true; bar.innerHTML = ""; return; }
+    bar.hidden = false;
+    bar.innerHTML = '<label for="briefInput">Brief for the AI</label>' +
+      '<input type="text" id="briefInput" placeholder="e.g. email about a summer internship" value="' +
+      escapeHtml(row.intent || "") + '">';
   }
 
   function renderStats() {
@@ -743,6 +764,7 @@
       company: row.company, contact_name: row.contact_name, contact_email: row.contact_email,
       role: row.role, status: row.status, error: row.error,
       channel: row.channel === "linkedin" ? "linkedin" : "email",
+      intent: row.intent || null,
       updated_at: new Date().toISOString()
     }).eq("id", id).then(function (res) {
       if (res && res.error) console.error("save company row failed:", res.error);
@@ -802,6 +824,8 @@
       contact_email: out.contact_email || "",
       role: out.role || ""
     };
+    var intent = String(capture.intent || "").trim().slice(0, 300);
+    if (intent) partial.intent = intent;
     if (out.source_profile && typeof out.source_profile === "object") {
       partial.source_profile = out.source_profile;
       partial.channel = "linkedin";
@@ -862,6 +886,7 @@
       } else {
         statusEl.textContent = "";
         document.getElementById("quickAddArea").value = payload.text;
+        if (payload.intent) document.getElementById("quickAddIntent").value = payload.intent;
         if (payload.kind === "linkedin") document.getElementById("quickAddIsLinkedIn").checked = true;
       }
     });
@@ -1129,7 +1154,11 @@
   // status and score columns, so we refetch afterwards. Returns
   // { ok, skipped, message, passed, score, attempts, feedback }.
   async function generateForRow(row) {
-    var gen = await invokeFn("generate-draft", { companyId: row.id, channel: row.channel === "linkedin" ? "linkedin" : "email" });
+    var gen = await invokeFn("generate-draft", {
+      companyId: row.id,
+      channel: row.channel === "linkedin" ? "linkedin" : "email",
+      instruction: row.intent || undefined
+    });
     var fresh = await sb.from("companies").select("*").eq("id", row.id).maybeSingle();
     if (fresh.data) {
       var idx = state.companies.findIndex(function (c) { return c.id === row.id; });
@@ -1243,6 +1272,14 @@
   document.getElementById("bodyInput").addEventListener("input", function (e) { state.template.body = e.target.value; scheduleSaveTemplate(); renderPreview(); });
   document.getElementById("yourNameInput").addEventListener("input", function (e) { state.template.your_name = e.target.value; scheduleSaveTemplate(); renderPreview(); });
 
+  document.getElementById("briefBar").addEventListener("input", function (e) {
+    if (e.target.id !== "briefInput") return;
+    var row = state.previewRowId ? findCompany(state.previewRowId) : state.companies[0];
+    if (!row) return;
+    row.intent = e.target.value;
+    scheduleFieldSave(row.id);
+  });
+
   document.querySelectorAll(".token-btn").forEach(function (btn) {
     btn.addEventListener("click", function () {
       var bodyEl = document.getElementById("bodyInput");
@@ -1288,6 +1325,7 @@
     document.getElementById("quickAddPanel").hidden = true;
     document.getElementById("quickAddArea").value = "";
     document.getElementById("quickAddIsLinkedIn").checked = false;
+    document.getElementById("quickAddIntent").value = "";
     document.getElementById("quickAddStatus").textContent = "";
   });
   document.getElementById("quickAddRunBtn").addEventListener("click", async function () {
@@ -1296,15 +1334,17 @@
     var text = document.getElementById("quickAddArea").value;
     if (!text.trim()) { statusEl.textContent = "Paste some page text first."; return; }
     var kind = document.getElementById("quickAddIsLinkedIn").checked ? "linkedin" : "page";
+    var intent = document.getElementById("quickAddIntent").value;
     btn.disabled = true;
     statusEl.textContent = kind === "linkedin" ? "Reading profile…" : "Extracting…";
-    var created = await quickAddFromText({ text: text, kind: kind });
+    var created = await quickAddFromText({ text: text, kind: kind, intent: intent });
     btn.disabled = false;
     statusEl.textContent = "";
     if (created) {
       document.getElementById("quickAddPanel").hidden = true;
       document.getElementById("quickAddArea").value = "";
       document.getElementById("quickAddIsLinkedIn").checked = false;
+      document.getElementById("quickAddIntent").value = "";
     }
   });
 

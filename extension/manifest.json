@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Letterhead Quick Add",
-  "version": "0.2.0",
-  "description": "Grab the company, role and contact (or a full LinkedIn profile) from the page you're on and drop it into Letterhead as a pending row.",
+  "version": "0.3.0",
+  "description": "Grab the company, role and contact (or a full LinkedIn profile) from the page you're on, add a short brief, and drop it into Letterhead as a pending row.",
   "permissions": ["activeTab", "scripting", "storage"],
   "background": { "service_worker": "background.js" },
   "action": { "default_popup": "popup.html" },

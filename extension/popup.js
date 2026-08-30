@@ -7,12 +7,13 @@ const LETTERHEAD_URL = "https://letterhead-repo.koolkasig19.workers.dev";
 const btn = document.getElementById("grab");
 const statusEl = document.getElementById("status");
 const kindEl = document.getElementById("kind");
+const intentEl = document.getElementById("intent");
 
 function detectKind(url) {
   return /^https:\/\/([a-z-]+\.)?linkedin\.com\/in\//i.test(url || "") ? "linkedin" : "page";
 }
 
-// Show what kind of page we're on as soon as the popup opens.
+// Show what kind of page we're on, and restore the last brief that was typed.
 (async () => {
   try {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -20,6 +21,12 @@ function detectKind(url) {
       detectKind(tab && tab.url) === "linkedin" ? "LinkedIn profile detected" : "Web page";
   } catch {
     /* leave blank */
+  }
+  try {
+    const { lastIntent } = await chrome.storage.local.get("lastIntent");
+    if (lastIntent) intentEl.value = lastIntent;
+  } catch {
+    /* ignore */
   }
 })();
 
@@ -43,11 +50,15 @@ btn.addEventListener("click", async () => {
     const text = String(result || "").replace(/\n{3,}/g, "\n\n").slice(0, 20000);
     if (!text.trim()) throw new Error("This page has no readable text.");
 
+    const intent = (intentEl.value || "").trim().slice(0, 300);
+    try { await chrome.storage.local.set({ lastIntent: intent }); } catch { /* ignore */ }
+
     const payload = {
       kind,
       url: (tab.url || "").split("?")[0],
       title: tab.title || "",
       text,
+      intent,
     };
     await chrome.runtime.sendMessage({ type: "stashQuickAdd", payload });
     await chrome.tabs.create({ url: LETTERHEAD_URL + "/?quickadd=1" });
