@@ -52,6 +52,16 @@ review always happens in Gmail itself.
   identity-linked-key gotcha as `generate-draft`). Prompt text is inlined as
   the `EXTRACT_GUIDE` const in `index.ts`; `prompts/extract-guide.md` is the
   editable source (re-inline by hand — the deploy path ships only `.ts`/`.js`).
+- **`supabase/functions/suggest-research/index.ts`** — Stage 2 of the
+  LinkedIn feature. Verifies the caller's JWT, reads their `companies` row
+  (RLS-scoped), and makes ONE Claude call (`ANTHROPIC_RESEARCH_MODEL` ||
+  `ANTHROPIC_EXTRACT_MODEL` || `claude-haiku-4-5`) to propose 3–6 research
+  questions (`topic` = `company` | `person`, plus a suggested search
+  `query`) about the contact and their employer. Writes them to
+  `companies.research_prompts` (each `{id, topic, question, query,
+  status:"suggested", selected:true}`) and returns them. It **does not run**
+  any of them — that's Stage 4 (`run-research`). Prompt inlined as
+  `RESEARCH_GUIDE`; `prompts/research-guide.md` is the editable source.
 - **`supabase/migrations/`** — full schema, in order:
   - `0001_init_schema.sql` — `profiles`, `companies`, `templates`,
     `cv_files`, `google_tokens` tables; RLS policies scoped to
@@ -169,10 +179,13 @@ agent's terminal action is always a reviewable Gmail draft.
      `?quickadd=1` handshake + "Quick add from text" paste panel.
   2. **LinkedIn capture — done (2026-08-30).** `kind:"linkedin"` path +
      `source_profile` blob + migration `0006`. Below.
-  3. **Research prompts (drafted, not run) — planned.** After a LinkedIn
-     capture, a cheap `suggest-research` call proposes 3–6 questions about
-     the person's company + recent work, stored in `research_prompts`
-     (`status:"suggested"`). Nothing runs.
+  3. **Research prompts (drafted, not run) — done (2026-08-30).**
+     `suggest-research` proposes 3–6 questions about the person's company +
+     recent work, stored in `research_prompts` (`status:"suggested"`).
+     Auto-called after a LinkedIn quick-add; the `#researchPanel` in the
+     Companies card lists them with checkboxes (persisted per row) and a
+     "Suggest research" / "Regenerate" button. The "Run selected" button is
+     present but disabled until Stage 4. Nothing runs.
   4. **Run research on demand — planned.** "Run selected/all" on the web
      calls `run-research`, which executes those prompts with Claude's
      web-search tool and stores findings + `research_notes`. Gated, costs

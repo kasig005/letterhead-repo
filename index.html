@@ -137,7 +137,17 @@
 
   .paste-panel { background: var(--paper-sunken); border: 1px solid var(--line); border-radius: 10px; padding: 14px; margin-bottom: 16px; }
   .paste-panel textarea { min-height: 110px; font-family: "IBM Plex Mono", monospace; font-size: 12.5px; }
-  .paste-actions { display: flex; gap: 8px; margin-top: 10px; }
+  .paste-actions { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; align-items: center; }
+
+  .research-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; }
+  .research-head h3 { font-size: 14px; }
+  .research-item { display: flex; gap: 9px; align-items: flex-start; padding: 8px 0; border-top: 1px solid var(--line-soft); }
+  .research-item:first-of-type { border-top: none; }
+  .research-item input[type="checkbox"] { margin-top: 3px; flex: none; }
+  .research-q { font-size: 13px; color: var(--ink-soft); }
+  .research-topic { display: inline-block; font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; padding: 1px 6px; border-radius: 4px; margin-right: 7px; background: var(--accent-soft); color: var(--accent); vertical-align: 1px; }
+  .research-topic.person { background: var(--warning-bg); color: var(--warning); }
+  .research-query { font-family: "IBM Plex Mono", monospace; font-size: 11px; color: var(--muted); margin-top: 2px; }
 
   .table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; }
   table { width: 100%; border-collapse: collapse; min-width: 720px; }
@@ -280,6 +290,7 @@
       </div>
     </div>
     <div id="tableArea"></div>
+    <div id="researchPanel" class="paste-panel" hidden></div>
   </section>
 
   <p class="foot-note">Your CV, template, and company list are stored in Letterhead's database so you can pick up where you left off — only your signed-in account can read them. Drafts land in your Gmail Drafts folder; nothing is sent until you open one and hit send.</p>
@@ -509,6 +520,7 @@
       profileLine = '<div class="field-hint" style="margin-top:4px">🔗 Captured from LinkedIn' + (bits.length ? ': ' + bits.join(" · ") : "") + '</div>';
     }
     el.innerHTML = '<div class="preview-subject">' + escapeHtml(subject || "(no subject)") + '</div><div class="preview-body">' + escapeHtml(body || "(empty body)") + '</div><div class="field-hint" style="margin-top:8px">' + escapeHtml(label) + '</div>' + scoreLine + profileLine;
+    renderResearch();
   }
 
   function renderStats() {
@@ -694,6 +706,8 @@
       }
       (target || tr.querySelector('input[data-field="company"]')).focus();
     }
+    // LinkedIn capture → draft the research prompts now (they are not run).
+    if (partial.source_profile) suggestResearchForRow(created);
     return created;
   }
 
@@ -736,6 +750,104 @@
       }
     });
   }
+
+  // ---------------- staged research (suggest-research) ----------------
+  // The row the research panel tracks — the previewed row, else the first.
+  function researchRow() {
+    var row = state.previewRowId ? findCompany(state.previewRowId) : null;
+    return row || state.companies[0] || null;
+  }
+
+  function renderResearch() {
+    var panel = document.getElementById("researchPanel");
+    var row = researchRow();
+    if (!row || !row.source_profile) { panel.hidden = true; panel.innerHTML = ""; return; }
+
+    var prompts = Array.isArray(row.research_prompts) ? row.research_prompts : [];
+    var who = escapeHtml([row.contact_name, row.company].filter(Boolean).join(" · ") || "this contact");
+    var busy = row.researchBusy === true;
+
+    if (prompts.length === 0) {
+      panel.hidden = false;
+      panel.innerHTML =
+        '<div class="research-head"><h3>Research — ' + who + '</h3></div>' +
+        '<p class="field-hint" style="margin:0 0 10px">Draft a few things worth looking up before writing. Nothing runs until you say so.</p>' +
+        '<button type="button" class="btn btn-secondary btn-sm" data-research="suggest"' + (busy ? " disabled" : "") + '>' +
+        (busy ? "Thinking…" : "Suggest research") + '</button>';
+      return;
+    }
+
+    var items = prompts.map(function (p, i) {
+      var topicCls = p.topic === "person" ? "research-topic person" : "research-topic";
+      return '<label class="research-item">' +
+        '<input type="checkbox" data-research="toggle" data-idx="' + i + '"' + (p.selected === false ? "" : " checked") + '>' +
+        '<span class="research-q"><span class="' + topicCls + '">' + escapeHtml(p.topic || "company") + '</span>' +
+        escapeHtml(p.question || "") +
+        (p.query ? '<div class="research-query">↳ ' + escapeHtml(p.query) + '</div>' : '') +
+        '</span></label>';
+    }).join("");
+
+    var selectedCount = prompts.filter(function (p) { return p.selected !== false; }).length;
+    panel.hidden = false;
+    panel.innerHTML =
+      '<div class="research-head"><h3>Research — ' + who + '</h3>' +
+      '<span class="field-hint">' + selectedCount + ' of ' + prompts.length + ' selected</span></div>' +
+      items +
+      '<div class="paste-actions">' +
+      '<button type="button" class="btn btn-primary btn-sm" data-research="run" disabled title="Runs the selected lookups — arriving in the next update">Run selected</button>' +
+      '<button type="button" class="btn btn-secondary btn-sm" data-research="suggest"' + (busy ? " disabled" : "") + '>' +
+      (busy ? "Thinking…" : "Regenerate") + '</button>' +
+      '</div>';
+  }
+
+  async function suggestResearchForRow(row) {
+    if (!row) return;
+    row.researchBusy = true;
+    renderResearch();
+    var res = await invokeFn("suggest-research", { companyId: row.id });
+    row.researchBusy = false;
+    if (res.error) {
+      var d = res.data || {};
+      if (d.error !== "not_configured") {
+        alert(describeInvokeError(res.error, res.data) || "Couldn't suggest research for this contact.");
+      }
+      renderResearch();
+      return;
+    }
+    var fresh = await sb.from("companies").select("*").eq("id", row.id).maybeSingle();
+    if (fresh.data) {
+      var idx = state.companies.findIndex(function (c) { return c.id === row.id; });
+      if (idx >= 0) state.companies[idx] = fresh.data;
+    }
+    renderResearch();
+  }
+
+  function saveResearchPrompts(id) {
+    var row = findCompany(id);
+    if (!row) return;
+    sb.from("companies")
+      .update({ research_prompts: row.research_prompts, updated_at: new Date().toISOString() })
+      .eq("id", id)
+      .then(function (res) { if (res && res.error) console.error("save research_prompts failed:", res.error); });
+  }
+
+  document.getElementById("researchPanel").addEventListener("click", function (e) {
+    var el = e.target.closest && e.target.closest("[data-research]");
+    if (!el || el.getAttribute("data-research") !== "suggest") return;
+    suggestResearchForRow(researchRow());
+  });
+
+  document.getElementById("researchPanel").addEventListener("change", function (e) {
+    var el = e.target;
+    if (!el.getAttribute || el.getAttribute("data-research") !== "toggle") return;
+    var row = researchRow();
+    if (!row || !Array.isArray(row.research_prompts)) return;
+    var i = parseInt(el.getAttribute("data-idx"), 10);
+    if (isNaN(i) || !row.research_prompts[i]) return;
+    row.research_prompts[i].selected = el.checked;
+    saveResearchPrompts(row.id);
+    renderResearch();
+  });
 
   // ---------------- draft creation ----------------
   function describeInvokeError(err, data) {
