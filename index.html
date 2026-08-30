@@ -151,6 +151,25 @@
   .research-answer { font-size: 12.5px; color: var(--ink-soft); margin-top: 4px; padding-left: 10px; border-left: 2px solid var(--line); }
   .research-notes { margin: 12px 0 4px; padding: 10px 12px; background: var(--accent-soft); border-radius: 8px; font-size: 12.5px; color: var(--ink-soft); }
 
+  #traceOverlay { position: fixed; inset: 0; z-index: 50; background: color-mix(in srgb, var(--ink) 55%, transparent); display: flex; align-items: flex-start; justify-content: center; padding: 5vh 16px; overflow-y: auto; }
+  .trace-card { background: var(--paper-raised); border: 1px solid var(--line); border-radius: 14px; box-shadow: var(--shadow); width: 100%; max-width: 720px; padding: 20px 22px 26px; }
+  .trace-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 4px; }
+  .trace-head h2 { font-size: 18px; }
+  .trace-sec { margin-top: 18px; }
+  .trace-sec > h3 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); margin-bottom: 8px; }
+  .trace-kv { display: flex; gap: 8px; font-size: 13px; padding: 4px 0; border-top: 1px solid var(--line-soft); }
+  .trace-kv:first-of-type { border-top: none; }
+  .trace-kv b { flex: none; width: 130px; color: var(--ink-soft); font-weight: 600; }
+  .trace-kv span { color: var(--muted); }
+  .trace-used { color: var(--success); font-weight: 600; }
+  .trace-unused { color: var(--muted); }
+  .trace-block { white-space: pre-wrap; font-size: 12.5px; line-height: 1.55; background: var(--paper-sunken); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; color: var(--ink-soft); max-height: 240px; overflow-y: auto; }
+  .trace-attempt { border-top: 1px solid var(--line-soft); padding: 10px 0; }
+  .trace-attempt:first-of-type { border-top: none; }
+  .trace-attempt-head { display: flex; align-items: center; gap: 8px; font-size: 12.5px; font-weight: 600; color: var(--ink-soft); margin-bottom: 4px; }
+  .trace-feedback { font-size: 12px; color: var(--muted); margin-top: 4px; }
+  .trace-card details > summary { cursor: pointer; font-size: 12.5px; color: var(--accent); margin-bottom: 8px; }
+
   .table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; }
   table { width: 100%; border-collapse: collapse; min-width: 720px; }
   thead th { text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); font-weight: 600; background: var(--paper-sunken); padding: 9px 12px; border-bottom: 1px solid var(--line); position: sticky; top: 0; }
@@ -297,6 +316,16 @@
 
   <p class="foot-note">Your CV, template, and company list are stored in Letterhead's database so you can pick up where you left off — only your signed-in account can read them. Drafts land in your Gmail Drafts folder; nothing is sent until you open one and hit send.</p>
 </main>
+
+<div id="traceOverlay" hidden>
+  <div class="trace-card" role="dialog" aria-modal="true" aria-labelledby="traceTitle">
+    <div class="trace-head">
+      <h2 id="traceTitle">How this was made</h2>
+      <button type="button" class="btn btn-secondary btn-sm" id="traceClose">Close</button>
+    </div>
+    <div id="traceBody"></div>
+  </div>
+</div>
 
 <script>
 (function () {
@@ -661,7 +690,9 @@
       var writeHtml = (busy || (isLinkedIn && !row.generated_linkedin)) ? "" :
         '<button type="button" class="btn btn-ghost btn-sm" data-action="write" data-id="' + row.id + '" title="Write this ' + (isLinkedIn ? "message" : "email") + ' with AI">' +
         (row.generated_at ? "✨ Rewrite" : "✨ Write") + '</button>';
-      actionHtml = chanHtml + writeHtml + actionHtml;
+      var traceHtml = (busy || !(row.generated_at || row.generation_trace)) ? "" :
+        '<button type="button" class="btn btn-ghost btn-sm" data-action="trace" data-id="' + row.id + '" title="See what this draft was built from" aria-label="How it was made">&#9432;</button>';
+      actionHtml = chanHtml + writeHtml + traceHtml + actionHtml;
       return "<tr data-id=\"" + row.id + "\">" +
         '<td><input type="text" data-field="company" data-id="' + row.id + '" value="' + escapeHtml(row.company) + '" placeholder="Company"></td>' +
         '<td><input type="text" data-field="contact_name" data-id="' + row.id + '" value="' + escapeHtml(row.contact_name) + '" placeholder="Contact name"></td>' +
@@ -983,6 +1014,98 @@
     renderResearch();
   });
 
+  // ---------------- "How it was made" review portal ----------------
+  function closeTracePanel() { document.getElementById("traceOverlay").hidden = true; }
+
+  async function openTracePanel(row) {
+    var overlay = document.getElementById("traceOverlay");
+    document.getElementById("traceBody").innerHTML = '<p class="field-hint">Loading…</p>';
+    overlay.hidden = false;
+    var rev = await sb.from("email_revisions")
+      .select("attempt,subject,body,score,feedback,created_at")
+      .eq("company_id", row.id).order("created_at", { ascending: true });
+    // The row in state may be stale for generation_trace right after a rewrite.
+    var fresh = await sb.from("companies").select("*").eq("id", row.id).maybeSingle();
+    if (fresh.data) {
+      var idx = state.companies.findIndex(function (c) { return c.id === row.id; });
+      if (idx >= 0) state.companies[idx] = fresh.data;
+      row = fresh.data;
+    }
+    renderTrace(row, (rev && rev.data) || []);
+  }
+
+  function traceKv(label, valueHtml) {
+    return '<div class="trace-kv"><b>' + escapeHtml(label) + '</b><span>' + valueHtml + '</span></div>';
+  }
+
+  function renderTrace(row, revisions) {
+    var t = row.generation_trace || null;
+    var isLi = (t && t.channel === "linkedin") || row.channel === "linkedin";
+    var out = [];
+
+    var when = (t && t.generated_at) || row.generated_at;
+    when = when ? new Date(when).toLocaleString() : "—";
+    var score = (t && typeof t.final_score === "number") ? t.final_score
+      : (typeof row.quality_score === "number" ? row.quality_score : null);
+    var attempts = (t && t.attempts) || row.quality_attempts || null;
+
+    out.push('<div class="trace-sec"><h3>Summary</h3>');
+    out.push(traceKv("Channel", isLi ? "LinkedIn message" : "Email draft"));
+    if (t && t.writer_model) out.push(traceKv("Models", escapeHtml(t.writer_model) + " writer · " + escapeHtml(t.judge_model || "?") + " judge"));
+    out.push(traceKv("Generated", escapeHtml(when)));
+    if (score != null) out.push(traceKv("Score", score + "/100" + (attempts ? " on attempt " + attempts : "") + (t && t.threshold ? " · bar " + t.threshold : "")));
+    out.push('</div>');
+
+    if (t && t.inputs) {
+      var i = t.inputs;
+      var c = i.contact || {};
+      out.push('<div class="trace-sec"><h3>What it drew on</h3>');
+      out.push(traceKv("Contact", escapeHtml([c.company, c.role, c.contact_name].filter(Boolean).join(" · ") || "—")));
+      out.push(traceKv("Your template", i.template_body ? '<span class="trace-used">used</span>' : '<span class="trace-unused">empty</span>'));
+      out.push(traceKv("CV text", i.used_cv_text
+        ? '<span class="trace-used">used</span> — ' + Number(i.cv_text_chars || 0).toLocaleString() + ' chars'
+        : '<span class="trace-unused">not used</span> — upload a text-based CV to ground the evidence'));
+      out.push(traceKv("LinkedIn profile", i.used_source_profile ? '<span class="trace-used">used</span>' : '<span class="trace-unused">none</span>'));
+      out.push(traceKv("Research notes", i.used_research_notes ? '<span class="trace-used">used</span>' : '<span class="trace-unused">none run</span>'));
+      out.push(traceKv("Extra instruction", i.instruction ? escapeHtml(i.instruction) : '<span class="trace-unused">none</span>'));
+      out.push('</div>');
+
+      if (i.template_body) out.push('<div class="trace-sec"><h3>Template body</h3><div class="trace-block">' + escapeHtml(i.template_body) + '</div></div>');
+      if (i.cv_text_excerpt) out.push('<div class="trace-sec"><h3>CV text (excerpt)</h3><div class="trace-block">' + escapeHtml(i.cv_text_excerpt) + ((i.cv_text_chars || 0) > i.cv_text_excerpt.length ? '\n…' : '') + '</div></div>');
+      if (i.source_profile) out.push('<div class="trace-sec"><h3>LinkedIn profile</h3><div class="trace-block">' + escapeHtml(JSON.stringify(i.source_profile, null, 2)) + '</div></div>');
+      if (i.research_notes) out.push('<div class="trace-sec"><h3>Research notes</h3><div class="trace-block">' + escapeHtml(i.research_notes) + '</div></div>');
+      if (t.writer_context) out.push('<div class="trace-sec"><details><summary>Show the full text the writer read</summary><div class="trace-block" style="max-height:360px">' + escapeHtml(t.writer_context) + '</div></details></div>');
+    } else {
+      out.push('<div class="trace-sec"><h3>What it drew on</h3><p class="field-hint">The input trace wasn’t recorded for this draft — it predates the review portal. Rewrite it to capture a full trace. The revision history below is still available.</p></div>');
+    }
+
+    var shown = (t && t.attempts && revisions.length > t.attempts) ? revisions.slice(-t.attempts) : revisions;
+    if (shown.length) {
+      out.push('<div class="trace-sec"><h3>Revisions in the last run (' + shown.length + ')</h3>');
+      shown.forEach(function (r) {
+        var cls = (typeof r.score === "number" && r.score >= 80) ? "score-ok" : "score-low";
+        out.push('<div class="trace-attempt"><div class="trace-attempt-head">Attempt ' + (r.attempt || "?") +
+          (typeof r.score === "number" ? ' <span class="score-badge ' + cls + '">' + r.score + '/100</span>' : '') + '</div>' +
+          '<div class="trace-block">' + escapeHtml(r.body || "") + '</div>' +
+          (r.feedback ? '<div class="trace-feedback"><b>Judge:</b> ' + escapeHtml(r.feedback) + '</div>' : '') + '</div>');
+      });
+      out.push('</div>');
+    }
+
+    var finalMsg = isLi ? row.generated_linkedin : row.generated_body;
+    if (finalMsg) out.push('<div class="trace-sec"><h3>Final message</h3><div class="trace-block">' + escapeHtml(finalMsg) + '</div></div>');
+
+    document.getElementById("traceBody").innerHTML = out.join("");
+  }
+
+  document.getElementById("traceClose").addEventListener("click", closeTracePanel);
+  document.getElementById("traceOverlay").addEventListener("click", function (e) {
+    if (e.target === this) closeTracePanel();
+  });
+  document.addEventListener("keydown", function (e) {
+    if (e.key === "Escape" && !document.getElementById("traceOverlay").hidden) closeTracePanel();
+  });
+
   // ---------------- draft creation ----------------
   function describeInvokeError(err, data) {
     if (data && data.message) return data.message;
@@ -1221,6 +1344,7 @@
     if (action === "draft" || action === "redo") createDraftForRow(row);
     else if (action === "force") createDraftForRow(row, true);
     else if (action === "write") writeDraftForRow(row);
+    else if (action === "trace") openTracePanel(row);
     else if (action === "remove") removeCompany(id);
     else if (action === "channel") {
       row.channel = row.channel === "linkedin" ? "email" : "linkedin";

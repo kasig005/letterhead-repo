@@ -481,11 +481,42 @@ Deno.serve(async (req: Request) => {
 
     const passed = !!judged && judged.score >= PASS_THRESHOLD;
 
+    // What the writer actually drew on — for the in-app "How it was made" portal.
+    const trace = {
+      channel,
+      writer_model: WRITER_MODEL,
+      judge_model: JUDGE_MODEL,
+      generated_at: new Date().toISOString(),
+      final_score: judged?.score ?? null,
+      attempts: attempt,
+      threshold: PASS_THRESHOLD,
+      passed,
+      inputs: {
+        contact: {
+          company: company.company || "",
+          role: company.role || "",
+          contact_name: company.contact_name || "",
+        },
+        template_subject: template?.subject || "",
+        template_body: (template?.body || "").slice(0, 4000),
+        used_cv_text: !!cvText,
+        cv_text_chars: cvText.length,
+        cv_text_excerpt: cvText.slice(0, 1500),
+        used_source_profile: !!company.source_profile,
+        source_profile: company.source_profile || null,
+        used_research_notes: !!company.research_notes,
+        research_notes: company.research_notes || null,
+        instruction: instruction || "",
+      },
+      writer_context: targetBlock.slice(0, 12000),
+    };
+
     await userClient.from("companies").update({
       status: passed ? "pending" : "needs_review",
       error: passed
         ? null
         : `Best score ${judged?.score ?? 0}/100 after ${attempt} attempt(s) — under the ${PASS_THRESHOLD} bar.`,
+      generation_trace: trace,
       updated_at: new Date().toISOString(),
     }).eq("id", companyId);
 

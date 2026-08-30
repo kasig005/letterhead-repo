@@ -47,7 +47,11 @@ review always happens in Gmail itself.
   when present; the guides + rubrics forbid citing any candidate experience
   not in the CV text, template, or `instruction`. Returns
   `{error:"not_configured"}` (HTTP 400) when the key is unset; the client
-  treats that as "skip generation".
+  treats that as "skip generation". After each run it writes
+  `companies.generation_trace` (jsonb) — models, score/attempts, and the
+  exact inputs it used (template body, CV-text excerpt + char count,
+  `source_profile`, `research_notes`, `instruction`) plus the full assembled
+  writer context — for the in-app "How it was made" review portal.
 - **`supabase/functions/extract-contact/index.ts`** — Quick Add helper.
   Verifies the caller's JWT, takes `{ text, kind?, url? }` (`kind` is
   `"page"` or `"linkedin"`; raw text capped at 20k chars), makes ONE Claude
@@ -106,6 +110,8 @@ review always happens in Gmail itself.
   - `0007_cv_text.sql` — `cv_text` (text) on `cv_files`; the CV's plain text,
     extracted once client-side (pdf.js / mammoth) at upload, fed to
     `generate-draft`.
+  - `0008_generation_trace.sql` — `generation_trace` (jsonb) on `companies`;
+    per-row record of what the writer drew on, for the review portal.
 
 ## Data model
 
@@ -238,6 +244,16 @@ agent's terminal action is always a reviewable Gmail draft.
   sources under `prompts/` updated to match (LinkedIn guide/rubric live only
   in `index.ts`).
 
+- **"How it was made" review portal — done (2026-08-30, `generate-draft`
+  v15 + migration `0008`).** Each row with a draft gets an `ⓘ` action that
+  opens a modal (`#traceOverlay`): summary (channel, writer/judge models,
+  time, score/attempt), "what it drew on" (contact, template, CV text used?
+  + char count, LinkedIn profile, research notes, instruction — each flagged
+  used/unused), the template body / CV excerpt / profile / notes verbatim, a
+  collapsible dump of the full writer context, the per-attempt revision
+  history (from `email_revisions`, last run only), and the final message.
+  Rows generated before v15 have no `generation_trace` — the portal still
+  shows the revision history and says the input trace wasn't recorded.
 - **CV-text drafting — done (2026-08-30, `generate-draft` v14).** `index.html`
   `saveCv()` now extracts the CV's plain text at upload — PDF via pdf.js 4.5
   ESM (`import()` from cdnjs, worker set), `.docx` via mammoth (lazy
