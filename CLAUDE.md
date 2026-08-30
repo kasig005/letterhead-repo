@@ -220,6 +220,26 @@ agent's terminal action is always a reviewable Gmail draft.
      and bulk "Create drafts" / `create-draft` skip LinkedIn rows. Email path
      unchanged (still a Gmail draft), now research-enriched.
 
+- **Anti-invention guard — done (2026-08-30, `generate-draft` v13).** The
+  writer is never shown the CV (only `create-draft` attaches it, as a file).
+  The guides used to say "name concrete tools/projects/employers", so with a
+  thin template the model fabricated candidate experience. Both
+  `WRITING_GUIDE` / `LINKEDIN_GUIDE` now state the CV contents are not
+  visible and that every claim about the candidate must trace to the
+  `templates` row or the `instruction` param; both rubrics score an invented
+  specific as 0 for its category and require it be named in feedback. `.md`
+  sources under `prompts/` updated to match (LinkedIn guide/rubric live only
+  in `index.ts`).
+
+- **CV-text drafting — planned (next).** Feed the candidate's real CV text
+  into `generate-draft` so the evidence paragraph is grounded. Plan: extract
+  text from the uploaded CV once (browser-side with pdf.js at upload time,
+  since the edge runtime can't easily parse PDF/docx), store it as
+  `cv_files.cv_text` via a new migration `0007_cv_text.sql`, and have
+  `generate-draft` read it (truncated ~4–6k chars) into the target block
+  alongside the template. Then the "only from the template or instruction"
+  rule extends to "…or the CV text".
+
   Components:
   - `extract-contact` Edge Function (see Architecture) — `{ text, kind, url }`
     in, base 4 fields out, plus `source_profile` for `kind:"linkedin"`. One
