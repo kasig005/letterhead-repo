@@ -1,9 +1,11 @@
 # Letterhead Quick Add (Chrome extension)
 
 A tiny Manifest V3 extension: on any web page, click **Grab this page** and it
-opens Letterhead with a new *pending* company row, pre-filled with the company,
-role, and contact it could read from that page. Nothing is sent — you review and
-create the draft in Letterhead as normal.
+opens Letterhead with a new *pending* company row, pre-filled from what it could
+read on that page. On a LinkedIn profile (`linkedin.com/in/…`) it captures the
+full profile (headline, about, current + past roles, location) so the drafting
+step has real context. Nothing is sent — you review and create the draft in
+Letterhead as normal.
 
 ## Install (Load unpacked)
 
@@ -17,6 +19,7 @@ create the draft in Letterhead as normal.
    works but the Letterhead tab falls back to asking you to paste the page text.
 
 The extension ID stays the same as long as this folder isn't moved or renamed.
+Reloading after an update (the ↻ on the card) keeps the same ID.
 
 ## Before it works end to end
 
@@ -31,11 +34,21 @@ The extension ID stays the same as long as this folder isn't moved or renamed.
   `ANTHROPIC_EXTRACT_MODEL` to override the model (defaults to
   `claude-haiku-4-5`).
 
-## Trust model
+## What it sends
 
-The extension reads the text of a page **only** when you click *Grab this page*
-on it (`activeTab` + `scripting`, no host permissions, no content scripts). It
-stashes that text in `chrome.storage.session` (in-memory, this browser only,
-never synced) and hands it once to the already-signed-in Letterhead tab, which
-then calls Supabase itself. The extension holds no credentials and never talks
-to Supabase, Google, or Anthropic directly.
+The popup runs `document.body.innerText` (preferring `<main>`) on the tab you
+clicked, trims it to 20k characters, and stashes
+`{ kind, url, title, text }` in `chrome.storage.session` — `kind` is
+`"linkedin"` for `linkedin.com/in/…` URLs, otherwise `"page"`. The Letterhead
+tab pulls that once via an origin-checked `onMessageExternal` message and clears
+it. The extension holds no credentials and never talks to Supabase, Google, or
+Anthropic directly.
+
+## Trust / LinkedIn note
+
+The extension only reads a page when you explicitly click *Grab this page* on it
+(`activeTab` + `scripting`, no host permissions, no content scripts). Reading a
+LinkedIn profile this way is DOM text from a page you already have open in your
+own session, not an automated crawl — but LinkedIn's User Agreement discourages
+bulk/automated collection, so keep it to profiles you're genuinely reaching out
+to.

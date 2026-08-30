@@ -270,6 +270,9 @@
         <label for="quickAddArea">Paste a job posting, team page, LinkedIn profile, or email signature — Letterhead pulls out the company, role, and contact</label>
         <textarea id="quickAddArea" placeholder="Paste the page text here…"></textarea>
       </div>
+      <label class="field-hint" style="display:flex;align-items:center;gap:6px;cursor:pointer;margin-bottom:10px">
+        <input type="checkbox" id="quickAddIsLinkedIn" style="width:auto"> This is a LinkedIn profile (capture the full profile for drafting)
+      </label>
       <div class="paste-actions">
         <button type="button" class="btn btn-primary btn-sm" id="quickAddRunBtn">Extract &amp; add</button>
         <button type="button" class="btn btn-secondary btn-sm" id="quickAddCancelBtn">Cancel</button>
@@ -496,7 +499,16 @@
       scoreLine = '<div class="field-hint" style="margin-top:4px">Quality score <b>' + sample.quality_score + '/100</b> after ' + passes +
         (sample.quality_feedback ? '. Judge notes: ' + escapeHtml(sample.quality_feedback) : '') + '</div>';
     }
-    el.innerHTML = '<div class="preview-subject">' + escapeHtml(subject || "(no subject)") + '</div><div class="preview-body">' + escapeHtml(body || "(empty body)") + '</div><div class="field-hint" style="margin-top:8px">' + escapeHtml(label) + '</div>' + scoreLine;
+    var profileLine = "";
+    if (sample.source_profile && typeof sample.source_profile === "object") {
+      var sp = sample.source_profile;
+      var bits = [];
+      if (sp.headline) bits.push(escapeHtml(sp.headline));
+      else if (sp.current_title || sp.current_company) bits.push(escapeHtml([sp.current_title, sp.current_company].filter(Boolean).join(" @ ")));
+      if (sp.location) bits.push(escapeHtml(sp.location));
+      profileLine = '<div class="field-hint" style="margin-top:4px">🔗 Captured from LinkedIn' + (bits.length ? ': ' + bits.join(" · ") : "") + '</div>';
+    }
+    el.innerHTML = '<div class="preview-subject">' + escapeHtml(subject || "(no subject)") + '</div><div class="preview-body">' + escapeHtml(body || "(empty body)") + '</div><div class="field-hint" style="margin-top:8px">' + escapeHtml(label) + '</div>' + scoreLine + profileLine;
   }
 
   function renderStats() {
@@ -631,12 +643,21 @@
   }
 
   // ---------------- quick add (extract-contact) ----------------
-  // Send raw page text to the extract-contact Edge Function, then insert one
-  // pending companies row from what it pulls out. Returns the new row, or null.
-  async function quickAddFromText(rawText) {
-    var text = String(rawText || "").trim();
+  // Send captured page text to the extract-contact Edge Function, then insert
+  // one pending companies row from what it pulls out. `input` is either a raw
+  // string (manual paste) or a { text, kind, url } capture from the extension.
+  // For a LinkedIn capture the row also gets source_profile + channel:"linkedin".
+  // Returns the new row, or null.
+  async function quickAddFromText(input) {
+    var capture = (typeof input === "string") ? { text: input } : (input || {});
+    var text = String(capture.text || "").trim();
     if (!text) return null;
-    var res = await invokeFn("extract-contact", { text: text.slice(0, 20000) });
+    var kind = capture.kind === "linkedin" ? "linkedin" : "page";
+
+    var body = { text: text.slice(0, 20000), kind: kind };
+    if (capture.url) body.url = String(capture.url).slice(0, 500);
+
+    var res = await invokeFn("extract-contact", body);
     if (res.error) {
       var d = res.data || {};
       if (d.error === "not_configured") {
@@ -647,12 +668,17 @@
       return null;
     }
     var out = res.data || {};
-    var created = await addCompany({
+    var partial = {
       company: out.company || "",
       contact_name: out.contact_name || "",
       contact_email: out.contact_email || "",
       role: out.role || ""
-    });
+    };
+    if (out.source_profile && typeof out.source_profile === "object") {
+      partial.source_profile = out.source_profile;
+      partial.channel = "linkedin";
+    }
+    var created = await addCompany(partial);
     if (!created) return null;
 
     state.previewRowId = created.id;
@@ -671,8 +697,8 @@
     return created;
   }
 
-  // On ?quickadd=1 (opened by the browser extension), pull the stashed page
-  // text out of the extension and run it through quickAddFromText.
+  // On ?quickadd=1 (opened by the browser extension), pull the stashed capture
+  // out of the extension and run it through quickAddFromText.
   function maybeRunExtensionQuickAdd() {
     var params = new URLSearchParams(window.location.search);
     if (params.get("quickadd") !== "1") return;
@@ -691,19 +717,22 @@
     panel.hidden = false;
     statusEl.textContent = "Importing page…";
     chrome.runtime.sendMessage(QUICKADD_EXTENSION_ID, { type: "pullQuickAdd" }, async function (resp) {
-      if (chrome.runtime.lastError || !resp || !resp.text) {
+      // Back-compat: older extension builds returned { text } instead of { payload }.
+      var payload = resp && (resp.payload || (resp.text ? { text: resp.text, kind: "page" } : null));
+      if (chrome.runtime.lastError || !payload || !payload.text) {
         statusEl.textContent = "Couldn't reach the Quick Add extension — paste the page text here.";
         document.getElementById("quickAddArea").focus();
         return;
       }
-      statusEl.textContent = "Importing page…";
-      var created = await quickAddFromText(resp.text);
+      statusEl.textContent = payload.kind === "linkedin" ? "Importing LinkedIn profile…" : "Importing page…";
+      var created = await quickAddFromText(payload);
       if (created) {
         statusEl.textContent = "";
         panel.hidden = true;
       } else {
         statusEl.textContent = "";
-        document.getElementById("quickAddArea").value = resp.text;
+        document.getElementById("quickAddArea").value = payload.text;
+        if (payload.kind === "linkedin") document.getElementById("quickAddIsLinkedIn").checked = true;
       }
     });
   }
@@ -880,6 +909,7 @@
   document.getElementById("quickAddCancelBtn").addEventListener("click", function () {
     document.getElementById("quickAddPanel").hidden = true;
     document.getElementById("quickAddArea").value = "";
+    document.getElementById("quickAddIsLinkedIn").checked = false;
     document.getElementById("quickAddStatus").textContent = "";
   });
   document.getElementById("quickAddRunBtn").addEventListener("click", async function () {
@@ -887,14 +917,16 @@
     var statusEl = document.getElementById("quickAddStatus");
     var text = document.getElementById("quickAddArea").value;
     if (!text.trim()) { statusEl.textContent = "Paste some page text first."; return; }
+    var kind = document.getElementById("quickAddIsLinkedIn").checked ? "linkedin" : "page";
     btn.disabled = true;
-    statusEl.textContent = "Extracting…";
-    var created = await quickAddFromText(text);
+    statusEl.textContent = kind === "linkedin" ? "Reading profile…" : "Extracting…";
+    var created = await quickAddFromText({ text: text, kind: kind });
     btn.disabled = false;
     statusEl.textContent = "";
     if (created) {
       document.getElementById("quickAddPanel").hidden = true;
       document.getElementById("quickAddArea").value = "";
+      document.getElementById("quickAddIsLinkedIn").checked = false;
     }
   });
 

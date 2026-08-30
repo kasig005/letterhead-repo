@@ -4,10 +4,14 @@ import { createClient } from "jsr:@supabase/supabase-js@2";
 // extract-contact — Quick Add helper.
 //
 // Takes raw page text (a job posting, team page, LinkedIn profile, email
-// signature, ...) and returns a single { company, role, contact_name,
-// contact_email } object pulled straight from that text. One Claude call, no
-// retry loop, no scoring. This function NEVER touches the database — the client
-// inserts the companies row from the response.
+// signature, ...) plus a `kind` hint and returns the fields a cold-outreach
+// row needs. One Claude call, no retry loop, no scoring. This function NEVER
+// touches the database — the client inserts the companies row from the
+// response.
+//
+// Request:  { text: string, kind?: "page" | "linkedin", url?: string }
+// Response: { ok: true, company, role, contact_name, contact_email,
+//             source_profile? }   (source_profile only when kind === "linkedin")
 
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
@@ -33,41 +37,64 @@ const MAX_TEXT = 20000;
 // here by hand if you change it.
 const EXTRACT_GUIDE = `# Contact extraction guide
 
-You are given the raw text of a single web page or document — it might be a job
-posting, a company "team" or "about" page, a LinkedIn profile, or an email
-signature. Pull out who a job-seeking candidate would address a cold outreach
-email to, and about what.
+You are given the raw text of a single web page or document, plus a \`kind\`
+hint (\`page\` or \`linkedin\`). Pull out who a job-seeking candidate would address
+outreach to, and about what.
 
-Return exactly ONE JSON object with exactly these four keys:
+## Always return
+
+ONE JSON object with these keys:
 
 {"company": "", "role": "", "contact_name": "", "contact_email": ""}
 
-## Field rules
-
-- company — the hiring or target organisation itself. Never a job board, ATS, or
-  recruiting platform: not "LinkedIn", "Indeed", "Greenhouse", "Workday",
-  "Lever", "Ashby", "SmartRecruiters", "Glassdoor". If the page is a posting
-  hosted on one of those, use the actual employer named in the posting.
-- role — the specific job title if the text states one (e.g. "Backend Engineer",
-  "Data Scientist, Forecasting"). If the page is a profile or team page with no
-  single opening, leave it "".
-- contact_name — a specific named person the email would go to (a hiring
-  manager, recruiter, team lead, or the profile's owner) if the text names one.
-  If no person is named, "".
+- company — the hiring or target organisation. Never a job board or ATS
+  (LinkedIn, Indeed, Greenhouse, Workday, Lever, Ashby, SmartRecruiters,
+  Glassdoor). On a posting hosted by one of those, use the real employer named
+  in the posting. On a LinkedIn profile, use the person's CURRENT employer.
+- role — the specific job title the outreach is about. On a job posting, the
+  posted title. On a LinkedIn profile, the person's current title. If none is
+  clear, "".
+- contact_name — a specific named person to address. On a profile, the profile
+  owner. On a posting, a named hiring manager or recruiter if the text names
+  one, else "".
 - contact_email — ONLY an email address written verbatim in the text. Copy it
-  exactly. NEVER build one from a name plus a company domain. NEVER guess a
-  format. If the text contains no literal email address, "".
+  exactly. NEVER construct one from a name plus a company domain. NEVER guess a
+  format. If the text has no literal address, "". An arbitration, legal, press,
+  or generic abuse address is not a hiring contact — leave contact_email ""
+  unless the address is clearly for reaching this person or their team.
+
+## When kind is "linkedin"
+
+Also include a \`source_profile\` object:
+
+{
+  "name": "",
+  "headline": "",
+  "location": "",
+  "about": "",
+  "current_title": "",
+  "current_company": "",
+  "past_roles": [ {"title": "", "company": ""} ],
+  "skills": [ "" ]
+}
+
+- Fill only from the text. Anything absent -> "" or [].
+- about — the profile's About / summary section, copied verbatim then trimmed to
+  about 600 characters. Do not paraphrase.
+- past_roles — previous positions, most recent first, at most 5.
+- skills — listed skills or clearly recurring themes, at most 10.
+- Ignore page furniture: "People you may know", "Promoted", "Activity",
+  follower / connection counts, "Show all", navigation, cookie notices.
 
 ## General rules
 
-- Any field you cannot fill from the text -> "" (an empty string). Never guess,
-  never use a placeholder like "N/A" or "unknown", never use null.
-- Do not invent, infer, or normalise. If the company name appears as "ACME"
-  return "ACME", not "Acme Corporation".
+- Any field you cannot fill -> "" or []. Never guess, never "N/A" / "unknown",
+  never null.
+- Do not normalise names. "ACME" stays "ACME", not "Acme Corporation".
 - Prefer the most specific correct answer. If several roles are listed, pick the
-  one the page is primarily about; if that is ambiguous, leave role "".
+  one the page is primarily about; if ambiguous, leave role "".
 
-## Output format
+## Output
 
 Respond with ONLY the JSON object — no code fences, no commentary, no leading or
 trailing text.
@@ -93,6 +120,28 @@ function parseJsonLoose(text: string): any {
   } catch {
     return null;
   }
+}
+
+const clean = (v: unknown) => String(v ?? "").trim();
+
+function normaliseProfile(raw: any, profileUrl: string) {
+  const p = raw && typeof raw === "object" ? raw : {};
+  const roles = Array.isArray(p.past_roles) ? p.past_roles : [];
+  const skills = Array.isArray(p.skills) ? p.skills : [];
+  return {
+    name: clean(p.name),
+    headline: clean(p.headline),
+    location: clean(p.location),
+    about: clean(p.about).slice(0, 800),
+    current_title: clean(p.current_title),
+    current_company: clean(p.current_company),
+    past_roles: roles
+      .slice(0, 5)
+      .map((r: any) => ({ title: clean(r?.title), company: clean(r?.company) }))
+      .filter((r: any) => r.title || r.company),
+    skills: skills.slice(0, 10).map(clean).filter(Boolean),
+    profile_url: profileUrl,
+  };
 }
 
 Deno.serve(async (req: Request) => {
@@ -121,6 +170,8 @@ Deno.serve(async (req: Request) => {
     return json({ error: "bad_request", message: "text is required" }, 400);
   }
   const pageText = rawText.slice(0, MAX_TEXT);
+  const kind = payload?.kind === "linkedin" ? "linkedin" : "page";
+  const profileUrl = typeof payload?.url === "string" ? payload.url.slice(0, 500) : "";
 
   if (!ANTHROPIC_API_KEY) {
     // The client treats this as "extraction unavailable" rather than a crash.
@@ -136,6 +187,7 @@ Deno.serve(async (req: Request) => {
   if (ANTHROPIC_WORKSPACE_ID) anthropicHeaders["anthropic-workspace-id"] = ANTHROPIC_WORKSPACE_ID;
 
   const system = `${EXTRACT_GUIDE}\n\nRespond with ONLY the JSON object. No code fences, no commentary.`;
+  const userMsg = `kind: ${kind}\n${profileUrl ? `url: ${profileUrl}\n` : ""}\nPage text:\n\n${pageText}`;
 
   try {
     const res = await fetch(ANTHROPIC_URL, {
@@ -143,9 +195,9 @@ Deno.serve(async (req: Request) => {
       headers: anthropicHeaders,
       body: JSON.stringify({
         model: MODEL,
-        max_tokens: 400,
+        max_tokens: kind === "linkedin" ? 1200 : 400,
         system,
-        messages: [{ role: "user", content: `Page text:\n\n${pageText}` }],
+        messages: [{ role: "user", content: userMsg }],
       }),
     });
     const data = await res.json().catch(() => null);
@@ -158,14 +210,17 @@ Deno.serve(async (req: Request) => {
       return json({ error: "extract_failed", message: "Could not read a contact from that text." }, 502);
     }
 
-    const clean = (v: unknown) => String(v ?? "").trim();
-    return json({
+    const out: Record<string, unknown> = {
       ok: true,
       company: clean(parsed.company),
       role: clean(parsed.role),
       contact_name: clean(parsed.contact_name),
       contact_email: clean(parsed.contact_email),
-    });
+    };
+    if (kind === "linkedin") {
+      out.source_profile = normaliseProfile(parsed.source_profile, profileUrl);
+    }
+    return json(out);
   } catch (err) {
     const message = err instanceof Error ? err.message : "Something went wrong reading that text.";
     return json({ error: "extract_failed", message }, 502);

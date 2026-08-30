@@ -39,12 +39,15 @@ review always happens in Gmail itself.
   Returns `{error:"not_configured"}` (HTTP 400) when the key is unset; the
   client treats that as "skip generation" so the app still works key-less.
 - **`supabase/functions/extract-contact/index.ts`** — Quick Add helper.
-  Verifies the caller's JWT, takes `{ text }` (raw page text, capped at
-  20k chars), makes ONE Claude Messages API call (`ANTHROPIC_API_KEY`
-  secret; model `claude-haiku-4-5`, override via `ANTHROPIC_EXTRACT_MODEL`)
-  and returns `{ ok:true, company, role, contact_name, contact_email }`
-  pulled verbatim from the text. No retry loop, no scoring, and it never
-  touches the database — the client inserts the `companies` row. Sends the
+  Verifies the caller's JWT, takes `{ text, kind?, url? }` (`kind` is
+  `"page"` or `"linkedin"`; raw text capped at 20k chars), makes ONE Claude
+  Messages API call (`ANTHROPIC_API_KEY` secret; model `claude-haiku-4-5`,
+  override via `ANTHROPIC_EXTRACT_MODEL`) and returns `{ ok:true, company,
+  role, contact_name, contact_email }` pulled verbatim from the text. When
+  `kind === "linkedin"` it also returns a `source_profile` object (name,
+  headline, location, about, current_title, current_company, past_roles[],
+  skills[], profile_url). No retry loop, no scoring, and it never touches the
+  database — the client inserts the `companies` row. Sends the
   `anthropic-workspace-id` header when `ANTHROPIC_WORKSPACE_ID` is set (same
   identity-linked-key gotcha as `generate-draft`). Prompt text is inlined as
   the `EXTRACT_GUIDE` const in `index.ts`; `prompts/extract-guide.md` is the
@@ -61,6 +64,13 @@ review always happens in Gmail itself.
     DEFINER function (see Status).
   - `0004_generated_draft_columns.sql` — `generated_subject`,
     `generated_body`, `generated_at` on `companies` for Feature 1.
+  - `0005_quality_gate.sql` — `quality_score` / `quality_attempts` /
+    `quality_feedback` on `companies`, plus the `email_revisions` audit
+    table, for the writer→judge loop.
+  - `0006_contact_research.sql` — `source_profile` (jsonb), `channel`
+    (`email`|`linkedin`, default `email`), `generated_linkedin`,
+    `research_prompts` (jsonb), `research_notes` on `companies` for the
+    LinkedIn-capture + staged-research feature (Stage 1).
 
 ## Data model
 
@@ -152,30 +162,52 @@ agent's terminal action is always a reviewable Gmail draft.
     script) if you edit them. If a real `supabase` CLI is ever used to
     deploy, the `readTextFile` approach would work and could be restored.
 
-- **Quick Add / browser extension — done (2026-08-30).** Adds companies
-  from raw page text instead of hand-typing. Two pieces:
-  - `extract-contact` Edge Function (see Architecture) — `{ text }` in,
-    `{ company, role, contact_name, contact_email }` out. One Claude call,
-    `ANTHROPIC_EXTRACT_MODEL` override (default `claude-haiku-4-5`), prompt
-    inlined as `EXTRACT_GUIDE` with `prompts/extract-guide.md` as the
-    editable source. No DB writes. **No new migration** — Quick Add only
-    fills the existing `companies` columns.
-  - `index.html` — `quickAddFromText(text)` calls `extract-contact`, then
-    inserts one `pending` row via the existing `addCompany()` path and
-    focuses its first empty cell. Two entry points: a **"Quick add from
-    text"** toolbar button opening a paste panel (always works), and, on
-    `?quickadd=1`, a `chrome.runtime.sendMessage(QUICKADD_EXTENSION_ID, …)`
-    handshake that pulls stashed page text from the extension. Falls back to
-    the paste panel when the extension isn't installed / ID not set.
+- **Quick Add / browser extension.** Adds companies from a captured web page
+  instead of hand-typing, and (Stage 1) captures full LinkedIn profiles for
+  richer drafting. Built in stages:
+  1. **Basic quick add — done (2026-08-30).** `extract-contact` +
+     `?quickadd=1` handshake + "Quick add from text" paste panel.
+  2. **LinkedIn capture — done (2026-08-30).** `kind:"linkedin"` path +
+     `source_profile` blob + migration `0006`. Below.
+  3. **Research prompts (drafted, not run) — planned.** After a LinkedIn
+     capture, a cheap `suggest-research` call proposes 3–6 questions about
+     the person's company + recent work, stored in `research_prompts`
+     (`status:"suggested"`). Nothing runs.
+  4. **Run research on demand — planned.** "Run selected/all" on the web
+     calls `run-research`, which executes those prompts with Claude's
+     web-search tool and stores findings + `research_notes`. Gated, costs
+     money, user-triggered only.
+  5. **Channel-aware drafting — planned.** `generate-draft` gains
+     `email`/`linkedin` modes, folds `source_profile` + `research_notes`
+     into the prompt, emits `generated_linkedin` (short no-subject DM, Copy
+     button). Email path unchanged (still a Gmail draft).
+
+  Components:
+  - `extract-contact` Edge Function (see Architecture) — `{ text, kind, url }`
+    in, base 4 fields out, plus `source_profile` for `kind:"linkedin"`. One
+    Claude call, `ANTHROPIC_EXTRACT_MODEL` override (default
+    `claude-haiku-4-5`), prompt inlined as `EXTRACT_GUIDE` with
+    `prompts/extract-guide.md` as the editable source. No DB writes.
+  - `index.html` — `quickAddFromText(input)` (string = manual paste, or
+    `{text,kind,url}` = extension capture) calls `extract-contact`, then
+    inserts one `pending` row via `addCompany()` (a LinkedIn capture also
+    sets `source_profile` + `channel:"linkedin"` on the row). Two entry
+    points: the **"Quick add from text"** toolbar button (paste panel, with
+    a "This is a LinkedIn profile" checkbox), and, on `?quickadd=1`, a
+    `chrome.runtime.sendMessage(QUICKADD_EXTENSION_ID, …)` handshake that
+    pulls the stashed capture from the extension. Falls back to the paste
+    panel when the extension isn't installed / ID not set.
     `QUICKADD_EXTENSION_ID` near the top of the `<script>` block must be set
-    to the ID `chrome://extensions` shows after Load unpacked.
+    to the ID `chrome://extensions` shows after Load unpacked, then the site
+    redeployed.
   - `extension/` — Manifest V3, `activeTab` + `scripting` + `storage`, no
-    host permissions. Popup reads `document.body.innerText`, stashes it in
-    `chrome.storage.session`, opens `LETTERHEAD_URL/?quickadd=1`. Background
-    worker hands the text to the Letterhead tab via `onMessageExternal`
-    (origin-checked) once, then clears it. `externally_connectable` matches
-    the deployed Worker URL. Holds no credentials; never calls Supabase or
-    Google. See `extension/README.md` for install steps.
+    host permissions. Popup reads `document.body.innerText` (preferring
+    `<main>`), tags it `kind:"linkedin"` for `linkedin.com/in/…` URLs,
+    stashes `{kind,url,title,text}` in `chrome.storage.session`, opens
+    `LETTERHEAD_URL/?quickadd=1`. Background worker hands that payload to the
+    Letterhead tab via origin-checked `onMessageExternal` once, then clears
+    it. `externally_connectable` matches the deployed Worker URL. Holds no
+    credentials; never calls Supabase or Google. See `extension/README.md`.
 
 ### Bugs fixed during setup (2026-08-29)
 
