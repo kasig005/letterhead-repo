@@ -440,17 +440,73 @@
     });
   }
 
+  // ---------------- CV text extraction (once per uploaded CV) ----------------
+  var scriptCache = {};
+  function loadScript(src) {
+    if (scriptCache[src]) return scriptCache[src];
+    scriptCache[src] = new Promise(function (resolve, reject) {
+      var s = document.createElement("script");
+      s.src = src; s.onload = resolve; s.onerror = function () { reject(new Error("load failed: " + src)); };
+      document.head.appendChild(s);
+    });
+    return scriptCache[src];
+  }
+
+  async function extractPdfText(file) {
+    var PDF = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.5.136/pdf.min.mjs";
+    // 4.x ships as ESM; import() it directly.
+    var pdfjs = await import(PDF);
+    pdfjs.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.5.136/pdf.worker.min.mjs";
+    var buf = await file.arrayBuffer();
+    var doc = await pdfjs.getDocument({ data: buf }).promise;
+    var out = [];
+    for (var p = 1; p <= doc.numPages && p <= 15; p++) {
+      var page = await doc.getPage(p);
+      var content = await page.getTextContent();
+      out.push(content.items.map(function (i) { return i.str; }).join(" "));
+    }
+    return out.join("\n").replace(/[ \t]+/g, " ").replace(/\n{3,}/g, "\n\n").trim();
+  }
+
+  async function extractDocxText(file) {
+    await loadScript("https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.8.0/mammoth.browser.min.js");
+    var buf = await file.arrayBuffer();
+    var res = await window.mammoth.extractRawText({ arrayBuffer: buf });
+    return String(res && res.value || "").replace(/\n{3,}/g, "\n\n").trim();
+  }
+
+  // Returns extracted text, or "" if unsupported / extraction failed (non-fatal).
+  async function extractCvText(file) {
+    var name = (file.name || "").toLowerCase();
+    var type = (file.type || "").toLowerCase();
+    try {
+      if (type.indexOf("pdf") >= 0 || name.endsWith(".pdf")) return await extractPdfText(file);
+      if (name.endsWith(".docx") || type.indexOf("wordprocessingml") >= 0) return await extractDocxText(file);
+    } catch (e) {
+      console.warn("CV text extraction failed:", e);
+    }
+    return "";
+  }
+
   async function saveCv(file) {
     var uid = state.session.user.id;
     var path = uid + "/" + Date.now() + "_" + file.name;
     var upload = await sb.storage.from("cv-files").upload(path, file, { upsert: true, contentType: file.type || "application/octet-stream" });
     if (upload.error) return false;
 
+    // Extract the CV's text now, once — generate-draft reads cv_files.cv_text
+    // rather than re-parsing the file on every message.
+    var cvText = await extractCvText(file);
+
     if (state.cv && state.cv.storage_path && state.cv.storage_path !== path) {
       sb.storage.from("cv-files").remove([state.cv.storage_path]).catch(function () {});
     }
 
-    var meta = { user_id: uid, filename: file.name, mime_type: file.type || "application/octet-stream", size: file.size, storage_path: path, uploaded_at: new Date().toISOString() };
+    var meta = {
+      user_id: uid, filename: file.name, mime_type: file.type || "application/octet-stream",
+      size: file.size, storage_path: path, uploaded_at: new Date().toISOString(),
+      cv_text: cvText ? cvText.slice(0, 20000) : null
+    };
     var upsert = await sb.from("cv_files").upsert(meta);
     if (upsert.error) return false;
     state.cv = meta;
@@ -1050,10 +1106,13 @@
   document.getElementById("cvInput").addEventListener("change", async function (e) {
     var file = e.target.files && e.target.files[0];
     if (!file) return;
-    document.getElementById("cvUploadBtn").textContent = "Uploading…";
+    document.getElementById("cvUploadBtn").textContent = "Reading CV…";
     var ok = await saveCv(file);
     renderCv();
     if (!ok) alert("Couldn't save your CV — try again in a moment.");
+    else if (state.cv && !state.cv.cv_text) {
+      console.info("CV saved, but no text could be extracted (scanned PDF or unsupported format). Drafts will rely on your template.");
+    }
   });
 
   document.getElementById("subjectInput").addEventListener("input", function (e) { state.template.subject = e.target.value; scheduleSaveTemplate(); renderPreview(); });

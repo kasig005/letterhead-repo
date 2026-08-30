@@ -33,7 +33,8 @@ review always happens in Gmail itself.
   `{{token}}` merge of the template.
 - **`supabase/functions/generate-draft/index.ts`** — agentic layer, Feature 1
   + quality gate + channel-aware drafting. Verifies the caller's JWT, reads
-  their `companies` row + `templates` row (RLS-scoped), runs the writer→judge
+  their `companies` row + `templates` row + `cv_files.cv_text` (RLS-scoped),
+  runs the writer→judge
   loop against the Claude Messages API (`ANTHROPIC_API_KEY` secret; writer
   `claude-opus-5` / `ANTHROPIC_MODEL`, judge `claude-haiku-4-5` /
   `ANTHROPIC_JUDGE_MODEL`), and stores the best draft + `quality_*` on the
@@ -41,9 +42,12 @@ review always happens in Gmail itself.
   `channel:"email"` (default, or `company.channel`) → `LINKEDIN_GUIDE`-free
   email into `generated_subject`/`generated_body`; `channel:"linkedin"` →
   a short no-subject DM (`LINKEDIN_GUIDE` + `LINKEDIN_RUBRIC`) into
-  `generated_linkedin`. Both channels fold `source_profile` + `research_notes`
-  into the prompt when present. Returns `{error:"not_configured"}` (HTTP 400)
-  when the key is unset; the client treats that as "skip generation".
+  `generated_linkedin`. Both channels fold the candidate's `cv_text` (≤5k
+  chars) plus `source_profile` + `research_notes` into the writer's context
+  when present; the guides + rubrics forbid citing any candidate experience
+  not in the CV text, template, or `instruction`. Returns
+  `{error:"not_configured"}` (HTTP 400) when the key is unset; the client
+  treats that as "skip generation".
 - **`supabase/functions/extract-contact/index.ts`** — Quick Add helper.
   Verifies the caller's JWT, takes `{ text, kind?, url? }` (`kind` is
   `"page"` or `"linkedin"`; raw text capped at 20k chars), makes ONE Claude
@@ -99,6 +103,9 @@ review always happens in Gmail itself.
     (`email`|`linkedin`, default `email`), `generated_linkedin`,
     `research_prompts` (jsonb), `research_notes` on `companies` for the
     LinkedIn-capture + staged-research feature (Stage 1).
+  - `0007_cv_text.sql` — `cv_text` (text) on `cv_files`; the CV's plain text,
+    extracted once client-side (pdf.js / mammoth) at upload, fed to
+    `generate-draft`.
 
 ## Data model
 
@@ -231,14 +238,14 @@ agent's terminal action is always a reviewable Gmail draft.
   sources under `prompts/` updated to match (LinkedIn guide/rubric live only
   in `index.ts`).
 
-- **CV-text drafting — planned (next).** Feed the candidate's real CV text
-  into `generate-draft` so the evidence paragraph is grounded. Plan: extract
-  text from the uploaded CV once (browser-side with pdf.js at upload time,
-  since the edge runtime can't easily parse PDF/docx), store it as
-  `cv_files.cv_text` via a new migration `0007_cv_text.sql`, and have
-  `generate-draft` read it (truncated ~4–6k chars) into the target block
-  alongside the template. Then the "only from the template or instruction"
-  rule extends to "…or the CV text".
+- **CV-text drafting — done (2026-08-30, `generate-draft` v14).** `index.html`
+  `saveCv()` now extracts the CV's plain text at upload — PDF via pdf.js 4.5
+  ESM (`import()` from cdnjs, worker set), `.docx` via mammoth (lazy
+  `loadScript`); unsupported / scanned files just store `null` (non-fatal,
+  button shows "Reading CV…"). Stored as `cv_files.cv_text` (≤20k), migration
+  `0007`. `generate-draft` reads it (≤5k) into the writer's target block, and
+  the "only from the template or instruction" rule now includes "…or the CV
+  text". Re-extraction only happens on a new upload — not per draft.
 
   Components:
   - `extract-contact` Edge Function (see Architecture) — `{ text, kind, url }`

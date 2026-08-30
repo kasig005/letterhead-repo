@@ -40,9 +40,10 @@ const WRITING_GUIDE = `# Cold email writing guide
 
 You are drafting a short cold outreach email for a job-seeking candidate, to a
 specific person at a specific company about a specific role or opportunity. A CV
-is attached to the email as a file, but you are NOT shown its contents — do not
-claim or imply you know what is in it. Everything you say about the candidate's
-experience must come from their template or the extra instruction you are given.
+is attached to the email as a file. Everything you say about the candidate's
+experience must come from the material you are given below — their CV text (when
+present), their template, or the extra instruction. Do not invent experience
+that none of those mention.
 
 Match the candidate's real voice, described below. This voice was reverse-engineered
 from the candidate's own sent emails. The sign-off name and any personal details
@@ -78,9 +79,10 @@ come from the context block you are given, not from this guide.
 3. One specific reason this company or person interests you. Concrete, not a
    paragraph that could come from their homepage.
 4. One short paragraph of evidence about the candidate — but ONLY skills, tools,
-   projects, datasets, employers, or roles that appear in the candidate's own
-   template or the extra instruction below. If you were given nothing specific
-   about the candidate, write one general line about their background and field
+   projects, datasets, employers, or roles that appear in the candidate's CV
+   text, their template, or the extra instruction below. Pick the 1 to 3 most
+   relevant to this recipient. If none of those sources gives you anything
+   specific, write one general line about the candidate's background and field
    instead. Never fill this in with invented specifics.
 5. One clear, softened ask. Patterns that fit the voice: "If there is any scope
    for...", "I would welcome the chance to...", "I was wondering if you'd be open
@@ -106,8 +108,8 @@ come from the context block you are given, not from this guide.
 
 - Include one recipient-specific detail that proves the email is not a template.
 - Name specific languages, tools, datasets, employers, or projects only when the
-  candidate's template or instruction gives them to you. Do not supply specifics
-  the candidate did not provide.
+  candidate's CV text, template, or instruction gives them to you. Do not supply
+  specifics the candidate did not provide.
 - Keep the ask polite and explicit.
 - These phrases are in voice and fine to use: "I wanted to reach out", "I am
   writing to ask", "I was wondering", "I would welcome the chance", "I would
@@ -135,9 +137,9 @@ come from the context block you are given, not from this guide.
   something specific about the company, keep the interest reason about the role
   or field, not a guess.
 - Do not invent ANY experience for the candidate — no project, employer, tool,
-  skill, client, or activity that is not in their template or the extra
-  instruction. If that leaves little to say about the candidate, say less. A
-  short honest email beats a fluent invented one.
+  skill, client, or activity that is not in their CV text, their template, or
+  the extra instruction. If that leaves little to say about the candidate, say
+  less. A short honest email beats a fluent invented one.
 - No leftover placeholder tokens (\`{{...}}\` or \`[brackets]\`) in the output.
 
 ## Output format
@@ -167,7 +169,7 @@ Score five categories and sum them for a total out of 100.
 | Voice match | 30 | Reads as earnest, direct, restrained. No hype, no effusive compliments, no salesy call to action. Correct greeting form and correct sign-off (\`Kind regards,\` or \`Best regards,\` then the candidate's full name). Formality around 3.5 out of 5. Any em dash, emoji, fake-enthusiasm word, or banned corporate phrase from the guide's Never list is a heavy deduction. |
 | Personalisation | 25 | Names this company and this role or opportunity. Contains at least one specific recipient detail that could not be reused for another company. A generic homepage-style paragraph scores 0 here. Any unresolved \`{{...}}\` or \`[brackets]\` is an automatic 0 for the whole category. |
 | Structure and ask | 20 | Self-introduction present on cold outreach, or a prior-link opener. Exactly one softened, explicit ask using a pattern from the guide. Small next step. One line of thanks then sign-off, with no second pitch after the ask. A plain CV line present if a CV is attached. |
-| Concreteness | 15 | Every specific claim about the candidate's experience (a named tool, project, employer, client, or activity) is traceable to the candidate's template or the extra instruction. An invented specific — something the candidate was never said to have done — scores 0 here and must be named in the feedback. A general but honest background line loses no points. |
+| Concreteness | 15 | Every specific claim about the candidate's experience (a named tool, project, employer, client, or activity) is traceable to the candidate's CV text, template, or the extra instruction. An invented specific — something none of those sources mentions — scores 0 here and must be named in the feedback. A general but honest background line loses no points. |
 | Length and correctness | 10 | Body within 120 to 220 words, in 4 to 6 short paragraphs. Company name spelled correctly. No invented facts about the company or candidate. No AI recap or inflated transitions. |
 
 ## Output format
@@ -212,10 +214,10 @@ direct, earnest, professional, no hype, no salesy call to action. First person.
 3. One concrete, specific reason for the interest — tied to their work, their
    company, or, if research notes are provided, something recent and real from
    those. Prefer a fact over a compliment.
-4. One short line of evidence about the candidate, drawn ONLY from their template
-   or the extra instruction — a named skill, tool, project, or role they were
-   actually said to have. If you have nothing specific, write one general line
-   about their background instead. Do not invent it.
+4. One short line of evidence about the candidate, drawn ONLY from their CV text,
+   their template, or the extra instruction — a named skill, tool, project, or
+   role they were actually said to have. If you have nothing specific, write one
+   general line about their background instead. Do not invent it.
 5. One soft, explicit ask with a small next step — a brief chat, a pointer,
    whether they're open to connecting about a specific thing.
 6. Sign off with the candidate's first name (or full name). No "Kind regards".
@@ -229,8 +231,8 @@ direct, earnest, professional, no hype, no salesy call to action. First person.
 - No "I hope this finds you well", no corporate filler, no fake enthusiasm.
 - Do not invent facts — not about the person, and not about the candidate's
   experience. Every claim about what the candidate has done must come from their
-  template or the extra instruction. With no research notes, keep the interest
-  reason about the role or field.
+  CV text, their template, or the extra instruction. With no research notes,
+  keep the interest reason about the role or field.
 - No leftover placeholder tokens.
 
 ## Output format
@@ -361,6 +363,12 @@ Deno.serve(async (req: Request) => {
   const { data: template } = await userClient
     .from("templates").select("*").eq("user_id", userId).single();
 
+  // CV text is extracted once, client-side, when the CV is uploaded — read it
+  // here rather than re-parsing the file.
+  const { data: cvRow } = await userClient
+    .from("cv_files").select("cv_text").eq("user_id", userId).maybeSingle();
+  const cvText = cvRow?.cv_text ? String(cvRow.cv_text).slice(0, 5000) : "";
+
   const instruction = payload?.instruction ? String(payload.instruction).slice(0, 1000) : "";
   const senderName = template?.your_name || "the candidate";
   const channel = (payload?.channel || company.channel) === "linkedin" ? "linkedin" : "email";
@@ -403,7 +411,9 @@ Deno.serve(async (req: Request) => {
     `subject: ${template?.subject || "(empty)"}`,
     `body:\n${template?.body || "(empty)"}`,
     instruction ? `\nExtra instruction from the candidate: ${instruction}` : "",
-  ].join("\n") + profileAndResearchBlock(company);
+  ].join("\n")
+    + (cvText ? `\n\nThe candidate's CV (their real experience — take any specific evidence from here):\n${cvText}` : "")
+    + profileAndResearchBlock(company);
 
   const writerGuide = channel === "linkedin" ? LINKEDIN_GUIDE : WRITING_GUIDE;
   const judgeGuide = channel === "linkedin" ? LINKEDIN_RUBRIC : RUBRIC;
