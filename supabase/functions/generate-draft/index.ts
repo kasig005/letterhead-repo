@@ -188,12 +188,113 @@ about your mission', it is hype. Replace with one concrete sentence naming what
 the company builds and why that field interests the candidate."
 `;
 
+// Channel: "linkedin" — a short DM instead of an email. No subject, no CV line.
+const LINKEDIN_GUIDE = `# LinkedIn message writing guide
+
+Write a short LinkedIn direct message (a connection note or first DM) from a
+job-seeking candidate to a specific person. No subject line. No attachment.
+
+Match the candidate's real voice (from their template and any examples given):
+direct, earnest, professional, no hype, no salesy call to action. First person.
+
+## Structure
+
+1. Greeting: "Hi [First name]," — or "Hi," if no name is given.
+2. One line on who you are and why you're reaching out to *them* specifically.
+3. One concrete, specific reason for the interest — tied to their work, their
+   company, or, if research notes are provided, something recent and real from
+   those. Prefer a fact over a compliment.
+4. One short line of relevant evidence about the candidate: a named skill, tool,
+   project, or role. One, not a list.
+5. One soft, explicit ask with a small next step — a brief chat, a pointer,
+   whether they're open to connecting about a specific thing.
+6. Sign off with the candidate's first name (or full name). No "Kind regards".
+
+## Length and style
+
+- 40 to 110 words. Hard cap 130. This is a DM, not an email.
+- 2 to 4 short sentences or tiny paragraphs.
+- Contractions are fine ("I'm", "I've", "I'd").
+- No em dashes. No emoji. At most one exclamation mark, only if warranted.
+- No "I hope this finds you well", no corporate filler, no fake enthusiasm.
+- Do not invent facts. With no research notes, keep the interest reason about
+  the role or field, not a guess about the person.
+- No leftover placeholder tokens.
+
+## Output format
+
+Respond with ONLY a JSON object, no code fences, no commentary:
+
+\`\`\`json
+{"body": "..."}
+\`\`\`
+
+\`body\` is the full message: greeting, message, sign-off with the name. There is
+no subject.
+`;
+const LINKEDIN_RUBRIC = `# LinkedIn message quality rubric
+
+Grade a short LinkedIn DM from a job-seeking candidate against their voice.
+Score strictly. Most drafts land in the 60s to 70s. Reserve 90+ for a message
+that is genuinely in voice and needs no edits.
+
+Score four categories and sum them for a total out of 100.
+
+| Category | Points | What you are checking |
+|---|---|---|
+| Voice match | 30 | Earnest, direct, restrained. No hype, no effusive compliments, no salesy call to action. First-name sign-off, not "Kind regards". Any em dash, emoji, fake-enthusiasm word, or corporate cliche is a heavy deduction. |
+| Personalisation | 30 | Names this person and their company or work. One specific reason that could not be reused for someone else. If research notes were provided, the message uses at least one concrete point from them. A generic message scores 0 here. Any unresolved \`{{...}}\` or \`[brackets]\` is an automatic 0. |
+| Structure and ask | 20 | Brief self-introduction, exactly one soft explicit ask with a small next step, first-name sign-off, no second pitch after the ask. |
+| Length and correctness | 20 | 40 to 130 words. No subject line. Company and person names spelled correctly. No invented facts. No AI recap phrases ("In summary", "Overall"). |
+
+## Output format
+
+Respond with ONLY a JSON object, no code fences, no commentary:
+
+\`\`\`json
+{
+  "score": 0,
+  "breakdown": { "voice": 0, "personalisation": 0, "structure": 0, "length": 0 },
+  "pass": false,
+  "feedback": "Concrete rewrite instructions, not praise."
+}
+\`\`\`
+
+\`score\` is the sum of \`breakdown\`. \`pass\` is \`true\` only when \`score >= 80\`.
+`;
+
 function extractText(msg: any): string {
   if (!msg || !Array.isArray(msg.content)) return "";
   return msg.content
     .filter((b: any) => b && b.type === "text")
     .map((b: any) => b.text || "")
     .join("");
+}
+
+// Profile + research context, appended to the writer's target block for both
+// channels when present.
+function profileAndResearchBlock(company: any): string {
+  const parts: string[] = [];
+  const sp = company?.source_profile;
+  if (sp && typeof sp === "object") {
+    const lines = [
+      sp.headline && `  headline: ${sp.headline}`,
+      sp.location && `  location: ${sp.location}`,
+      (sp.current_title || sp.current_company) &&
+        `  current: ${[sp.current_title, sp.current_company].filter(Boolean).join(" @ ")}`,
+      Array.isArray(sp.past_roles) && sp.past_roles.length &&
+        `  past: ${sp.past_roles.map((r: any) => [r?.title, r?.company].filter(Boolean).join(" @ ")).filter(Boolean).join("; ")}`,
+      Array.isArray(sp.skills) && sp.skills.length && `  skills: ${sp.skills.join(", ")}`,
+      sp.about && `  about: ${String(sp.about).slice(0, 500)}`,
+    ].filter(Boolean);
+    if (lines.length) parts.push("Captured LinkedIn profile of the contact:\n" + lines.join("\n"));
+  }
+  if (company?.research_notes) {
+    parts.push(
+      `Research notes — use concrete points from these, do not contradict them:\n  ${String(company.research_notes).slice(0, 1200)}`,
+    );
+  }
+  return parts.length ? "\n\n" + parts.join("\n\n") : "";
 }
 
 function parseJsonLoose(text: string): any {
@@ -250,6 +351,7 @@ Deno.serve(async (req: Request) => {
 
   const instruction = payload?.instruction ? String(payload.instruction).slice(0, 1000) : "";
   const senderName = template?.your_name || "the candidate";
+  const channel = (payload?.channel || company.channel) === "linkedin" ? "linkedin" : "email";
 
   const anthropicHeaders: Record<string, string> = {
     "Content-Type": "application/json",
@@ -279,6 +381,7 @@ Deno.serve(async (req: Request) => {
   }
 
   const targetBlock = [
+    `Channel: ${channel === "linkedin" ? "LinkedIn direct message" : "email"}`,
     `Company: ${company.company || "(unknown)"}`,
     `Role / context: ${company.role || "(unknown)"}`,
     `Contact: ${company.contact_name || "(no name given)"}`,
@@ -288,10 +391,12 @@ Deno.serve(async (req: Request) => {
     `subject: ${template?.subject || "(empty)"}`,
     `body:\n${template?.body || "(empty)"}`,
     instruction ? `\nExtra instruction from the candidate: ${instruction}` : "",
-  ].join("\n");
+  ].join("\n") + profileAndResearchBlock(company);
 
-  const writerSystem = `${WRITING_GUIDE}\n\nRespond with ONLY the JSON object described above. No code fences, no commentary.`;
-  const judgeSystem = `${RUBRIC}\n\nRespond with ONLY the JSON object described above. No code fences, no commentary.`;
+  const writerGuide = channel === "linkedin" ? LINKEDIN_GUIDE : WRITING_GUIDE;
+  const judgeGuide = channel === "linkedin" ? LINKEDIN_RUBRIC : RUBRIC;
+  const writerSystem = `${writerGuide}\n\nRespond with ONLY the JSON object described above. No code fences, no commentary.`;
+  const judgeSystem = `${judgeGuide}\n\nRespond with ONLY the JSON object described above. No code fences, no commentary.`;
 
   await userClient.from("companies").update({ status: "generating", error: null }).eq("id", companyId);
 
@@ -306,8 +411,11 @@ Deno.serve(async (req: Request) => {
         await userClient.from("companies").update({ status: "generating" }).eq("id", companyId);
       }
 
+      const prevDraftBlock = channel === "linkedin"
+        ? `Your previous message:\n${draft?.body}`
+        : `Your previous draft:\nSubject: ${draft?.subject}\nBody:\n${draft?.body}`;
       const writerUser = judged && draft
-        ? `${targetBlock}\n\nYour previous draft:\nSubject: ${draft.subject}\nBody:\n${draft.body}\n\nJudge feedback (fix these specific issues):\n${judged.feedback}\n\nWrite a revised draft that addresses this feedback.`
+        ? `${targetBlock}\n\n${prevDraftBlock}\n\nJudge feedback (fix these specific issues):\n${judged.feedback}\n\nWrite a revised draft that addresses this feedback.`
         : `${targetBlock}\n\nWrite a first draft.`;
 
       const w = await callClaude(WRITER_MODEL, writerSystem, writerUser, 1200, "low");
@@ -316,7 +424,9 @@ Deno.serve(async (req: Request) => {
 
       await userClient.from("companies").update({ status: "scoring" }).eq("id", companyId);
 
-      const judgeUser = `Company: ${company.company || "(unknown)"}\nRole: ${company.role || "the role"}\n\nSubject: ${draft.subject}\n\nBody:\n${draft.body}`;
+      const judgeUser = channel === "linkedin"
+        ? `Company: ${company.company || "(unknown)"}\nRole: ${company.role || "the role"}\nContact: ${company.contact_name || "(no name)"}\n\nMessage:\n${draft.body}`
+        : `Company: ${company.company || "(unknown)"}\nRole: ${company.role || "the role"}\n\nSubject: ${draft.subject}\n\nBody:\n${draft.body}`;
       const j = await callClaude(JUDGE_MODEL, judgeSystem, judgeUser, 800);
       if (!j.parsed || typeof j.parsed.score !== "number") throw new Error("Judge did not return a usable score.");
       judged = {
@@ -332,9 +442,11 @@ Deno.serve(async (req: Request) => {
         score: judged.score, breakdown: judged.breakdown, feedback: judged.feedback,
       });
 
+      const draftCols = channel === "linkedin"
+        ? { generated_linkedin: draft.body }
+        : { generated_subject: draft.subject || null, generated_body: draft.body };
       await userClient.from("companies").update({
-        generated_subject: draft.subject || null,
-        generated_body: draft.body,
+        ...draftCols,
         generated_at: new Date().toISOString(),
         quality_score: judged.score,
         quality_attempts: attempt,
@@ -358,10 +470,11 @@ Deno.serve(async (req: Request) => {
     return json({
       ok: true,
       passed,
+      channel,
       score: judged?.score ?? 0,
       attempts: attempt,
       threshold: PASS_THRESHOLD,
-      subject: draft?.subject ?? "",
+      subject: channel === "linkedin" ? "" : (draft?.subject ?? ""),
       body: draft?.body ?? "",
       feedback: judged?.feedback ?? "",
       writerModel: WRITER_MODEL,

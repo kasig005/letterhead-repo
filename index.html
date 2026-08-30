@@ -496,16 +496,25 @@
       el.innerHTML = '<div class="preview-empty">Add a company below to see how the email will read.</div>';
       return;
     }
-    var hasAi = sample.generated_body && String(sample.generated_body).trim().length > 0;
-    var subject, body;
-    if (hasAi) {
-      subject = sample.generated_subject || mergeTemplate(sample, state.template).subject;
-      body = sample.generated_body;
+    var isLinkedIn = sample.channel === "linkedin";
+    var subject, body, label;
+    if (isLinkedIn) {
+      var liMsg = sample.generated_linkedin && String(sample.generated_linkedin).trim();
+      subject = "";
+      body = liMsg || "Not written yet — hit ✨ Write on the row.";
+      label = (liMsg ? "✨ LinkedIn message for " : "LinkedIn message for ") + (sample.company || "this contact") +
+        " · copy it into LinkedIn yourself";
     } else {
-      var merged = mergeTemplate(sample, state.template);
-      subject = merged.subject; body = merged.body;
+      var hasAi = sample.generated_body && String(sample.generated_body).trim().length > 0;
+      if (hasAi) {
+        subject = sample.generated_subject || mergeTemplate(sample, state.template).subject;
+        body = sample.generated_body;
+      } else {
+        var merged = mergeTemplate(sample, state.template);
+        subject = merged.subject; body = merged.body;
+      }
+      label = (hasAi ? "✨ AI draft for " : "Template preview for ") + (sample.company || "your first company");
     }
-    var label = (hasAi ? "✨ AI draft for " : "Template preview for ") + (sample.company || "your first company");
     var scoreLine = "";
     if (typeof sample.quality_score === "number") {
       var passes = (sample.quality_attempts || 1) + ((sample.quality_attempts === 1) ? " pass" : " passes");
@@ -521,7 +530,8 @@
       if (sp.location) bits.push(escapeHtml(sp.location));
       profileLine = '<div class="field-hint" style="margin-top:4px">🔗 Captured from LinkedIn' + (bits.length ? ': ' + bits.join(" · ") : "") + '</div>';
     }
-    el.innerHTML = '<div class="preview-subject">' + escapeHtml(subject || "(no subject)") + '</div><div class="preview-body">' + escapeHtml(body || "(empty body)") + '</div><div class="field-hint" style="margin-top:8px">' + escapeHtml(label) + '</div>' + scoreLine + profileLine;
+    var subjectHtml = isLinkedIn ? "" : '<div class="preview-subject">' + escapeHtml(subject || "(no subject)") + '</div>';
+    el.innerHTML = subjectHtml + '<div class="preview-body">' + escapeHtml(body || "(empty body)") + '</div><div class="field-hint" style="margin-top:8px">' + escapeHtml(label) + '</div>' + scoreLine + profileLine;
     renderResearch();
   }
 
@@ -573,15 +583,29 @@
     }
     var rows = state.companies.map(function (row) {
       var busy = row.status === "creating" || row.status === "generating" || row.status === "scoring";
+      var isLinkedIn = row.channel === "linkedin";
       var actionHtml;
-      if (busy) actionHtml = '<span class="field-hint">Working…</span>';
-      else if (row.status === "drafted") actionHtml = '<button type="button" class="btn btn-secondary btn-sm" data-action="redo" data-id="' + row.id + '">Recreate</button>';
-      else if (row.status === "needs_review") actionHtml = '<button type="button" class="btn btn-secondary btn-sm" data-action="force" data-id="' + row.id + '" title="Create the Gmail draft despite the low score">Create anyway</button>';
-      else actionHtml = '<button type="button" class="btn btn-primary btn-sm" data-action="draft" data-id="' + row.id + '">Create draft</button>';
-      var writeHtml = busy ? "" :
-        '<button type="button" class="btn btn-ghost btn-sm" data-action="write" data-id="' + row.id + '" title="Write this email with AI">' +
+      if (busy) {
+        actionHtml = '<span class="field-hint">Working…</span>';
+      } else if (isLinkedIn) {
+        // No Gmail path for a LinkedIn DM — write it, then copy it.
+        actionHtml = row.generated_linkedin
+          ? '<button type="button" class="btn btn-primary btn-sm" data-action="copy-linkedin" data-id="' + row.id + '">Copy message</button>'
+          : '<button type="button" class="btn btn-primary btn-sm" data-action="write" data-id="' + row.id + '">Write message</button>';
+      } else if (row.status === "drafted") {
+        actionHtml = '<button type="button" class="btn btn-secondary btn-sm" data-action="redo" data-id="' + row.id + '">Recreate</button>';
+      } else if (row.status === "needs_review") {
+        actionHtml = '<button type="button" class="btn btn-secondary btn-sm" data-action="force" data-id="' + row.id + '" title="Create the Gmail draft despite the low score">Create anyway</button>';
+      } else {
+        actionHtml = '<button type="button" class="btn btn-primary btn-sm" data-action="draft" data-id="' + row.id + '">Create draft</button>';
+      }
+      var chanHtml = busy ? "" :
+        '<button type="button" class="btn btn-ghost btn-sm" data-action="channel" data-id="' + row.id + '" title="Switch between an email draft and a LinkedIn message">' +
+        (isLinkedIn ? "in" : "✉") + '</button>';
+      var writeHtml = (busy || (isLinkedIn && !row.generated_linkedin)) ? "" :
+        '<button type="button" class="btn btn-ghost btn-sm" data-action="write" data-id="' + row.id + '" title="Write this ' + (isLinkedIn ? "message" : "email") + ' with AI">' +
         (row.generated_at ? "✨ Rewrite" : "✨ Write") + '</button>';
-      actionHtml = writeHtml + actionHtml;
+      actionHtml = chanHtml + writeHtml + actionHtml;
       return "<tr data-id=\"" + row.id + "\">" +
         '<td><input type="text" data-field="company" data-id="' + row.id + '" value="' + escapeHtml(row.company) + '" placeholder="Company"></td>' +
         '<td><input type="text" data-field="contact_name" data-id="' + row.id + '" value="' + escapeHtml(row.contact_name) + '" placeholder="Contact name"></td>' +
@@ -629,7 +653,9 @@
     if (!row) return Promise.resolve();
     return sb.from("companies").update({
       company: row.company, contact_name: row.contact_name, contact_email: row.contact_email,
-      role: row.role, status: row.status, error: row.error, updated_at: new Date().toISOString()
+      role: row.role, status: row.status, error: row.error,
+      channel: row.channel === "linkedin" ? "linkedin" : "email",
+      updated_at: new Date().toISOString()
     }).eq("id", id).then(function (res) {
       if (res && res.error) console.error("save company row failed:", res.error);
       return res;
@@ -923,7 +949,7 @@
   // status and score columns, so we refetch afterwards. Returns
   // { ok, skipped, message, passed, score, attempts, feedback }.
   async function generateForRow(row) {
-    var gen = await invokeFn("generate-draft", { companyId: row.id });
+    var gen = await invokeFn("generate-draft", { companyId: row.id, channel: row.channel === "linkedin" ? "linkedin" : "email" });
     var fresh = await sb.from("companies").select("*").eq("id", row.id).maybeSingle();
     if (fresh.data) {
       var idx = state.companies.findIndex(function (c) { return c.id === row.id; });
@@ -954,6 +980,8 @@
   }
 
   async function createDraftForRow(row, force) {
+    // A LinkedIn row has no Gmail path — write it and copy it instead.
+    if (row.channel === "linkedin") return writeDraftForRow(row);
     // Flush any not-yet-saved edits to this row before the function reads it.
     await saveCompanyRow(row.id);
     row.status = "generating"; row.error = null;
@@ -1006,7 +1034,10 @@
   async function createPendingDrafts() {
     var bulkBtn = document.getElementById("bulkDraftBtn");
     bulkBtn.disabled = true;
-    var pending = state.companies.filter(function (c) { return c.status === "pending" || c.status === "error"; });
+    // Bulk "Create drafts" is the Gmail path — skip LinkedIn-channel rows.
+    var pending = state.companies.filter(function (c) {
+      return (c.status === "pending" || c.status === "error") && c.channel !== "linkedin";
+    });
     for (var i = 0; i < pending.length; i++) {
       var updated = await createDraftForRow(pending[i]);
       if (updated && updated.status === "error" && /reconnect|not connected|sign in again/i.test(updated.error || "")) break;
@@ -1132,6 +1163,23 @@
     else if (action === "force") createDraftForRow(row, true);
     else if (action === "write") writeDraftForRow(row);
     else if (action === "remove") removeCompany(id);
+    else if (action === "channel") {
+      row.channel = row.channel === "linkedin" ? "email" : "linkedin";
+      saveCompanyRow(id);
+      renderTable(); renderStats(); renderPreview();
+    } else if (action === "copy-linkedin") {
+      var msg = row.generated_linkedin || "";
+      if (!msg) return;
+      var done = function () {
+        actionEl.textContent = "Copied ✓";
+        setTimeout(function () { renderTable(); }, 1200);
+      };
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(msg).then(done, function () { window.prompt("Copy the message:", msg); });
+      } else {
+        window.prompt("Copy the message:", msg);
+      }
+    }
   });
 })();
 </script>

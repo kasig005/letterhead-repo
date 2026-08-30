@@ -31,13 +31,19 @@ review always happens in Gmail itself.
   *that user's* account. Uses the row's `generated_subject`/`generated_body`
   (from `generate-draft`) when present; otherwise falls back to naive
   `{{token}}` merge of the template.
-- **`supabase/functions/generate-draft/index.ts`** — agentic layer, Feature 1.
-  Verifies the caller's JWT, reads their `companies` row + `templates` row
-  (RLS-scoped), calls the Claude Messages API (`ANTHROPIC_API_KEY` secret;
-  model `claude-opus-5`, override via `ANTHROPIC_MODEL` secret) to write a
-  tailored subject + body, and stores it on the row. Never touches Gmail.
-  Returns `{error:"not_configured"}` (HTTP 400) when the key is unset; the
-  client treats that as "skip generation" so the app still works key-less.
+- **`supabase/functions/generate-draft/index.ts`** — agentic layer, Feature 1
+  + quality gate + channel-aware drafting. Verifies the caller's JWT, reads
+  their `companies` row + `templates` row (RLS-scoped), runs the writer→judge
+  loop against the Claude Messages API (`ANTHROPIC_API_KEY` secret; writer
+  `claude-opus-5` / `ANTHROPIC_MODEL`, judge `claude-haiku-4-5` /
+  `ANTHROPIC_JUDGE_MODEL`), and stores the best draft + `quality_*` on the
+  row. Never touches Gmail. Takes `{ companyId, channel?, instruction? }`:
+  `channel:"email"` (default, or `company.channel`) → `LINKEDIN_GUIDE`-free
+  email into `generated_subject`/`generated_body`; `channel:"linkedin"` →
+  a short no-subject DM (`LINKEDIN_GUIDE` + `LINKEDIN_RUBRIC`) into
+  `generated_linkedin`. Both channels fold `source_profile` + `research_notes`
+  into the prompt when present. Returns `{error:"not_configured"}` (HTTP 400)
+  when the key is unset; the client treats that as "skip generation".
 - **`supabase/functions/extract-contact/index.ts`** — Quick Add helper.
   Verifies the caller's JWT, takes `{ text, kind?, url? }` (`kind` is
   `"page"` or `"linkedin"`; raw text capped at 20k chars), makes ONE Claude
@@ -204,10 +210,15 @@ agent's terminal action is always a reviewable Gmail draft.
      "Run selected (N)" button (with a `confirm()`) triggers it; per-prompt
      status shows suggested → running → done with answers + source links, and
      the notes render below. Gated, costs money, user-triggered only.
-  5. **Channel-aware drafting — planned.** `generate-draft` gains
-     `email`/`linkedin` modes, folds `source_profile` + `research_notes`
-     into the prompt, emits `generated_linkedin` (short no-subject DM, Copy
-     button). Email path unchanged (still a Gmail draft).
+  5. **Channel-aware drafting — done (2026-08-30).** `generate-draft` takes
+     a `channel` (`email` | `linkedin`, also read from `company.channel`),
+     folds `source_profile` + `research_notes` into the writer prompt, and in
+     `linkedin` mode writes a short no-subject DM to `generated_linkedin`
+     scored against `LINKEDIN_RUBRIC`. Frontend: a per-row `✉` / `in` channel
+     toggle; a LinkedIn row shows **Write message** then **Copy message**
+     (clipboard) instead of Create draft, the preview drops the subject line,
+     and bulk "Create drafts" / `create-draft` skip LinkedIn rows. Email path
+     unchanged (still a Gmail draft), now research-enriched.
 
   Components:
   - `extract-contact` Edge Function (see Architecture) — `{ text, kind, url }`
