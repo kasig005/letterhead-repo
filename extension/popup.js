@@ -8,6 +8,7 @@ const btn = document.getElementById("grab");
 const statusEl = document.getElementById("status");
 const kindEl = document.getElementById("kind");
 const intentEl = document.getElementById("intent");
+const emailEl = document.getElementById("email");
 
 function detectKind(url) {
   return /^https:\/\/([a-z-]+\.)?linkedin\.com\/in\//i.test(url || "") ? "linkedin" : "page";
@@ -59,6 +60,7 @@ btn.addEventListener("click", async () => {
       title: tab.title || "",
       text,
       intent,
+      email: (emailEl.value || "").trim().slice(0, 200),
     };
     await chrome.runtime.sendMessage({ type: "stashQuickAdd", payload });
     await chrome.tabs.create({ url: LETTERHEAD_URL + "/?quickadd=1" });

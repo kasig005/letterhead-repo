@@ -308,9 +308,15 @@
       <label class="field-hint" style="display:flex;align-items:center;gap:6px;cursor:pointer;margin-bottom:10px">
         <input type="checkbox" id="quickAddIsLinkedIn" style="width:auto"> This is a LinkedIn profile (capture the full profile for drafting)
       </label>
-      <div class="field" style="margin-bottom:10px">
-        <label for="quickAddIntent">What's it about? (optional) — steers the draft</label>
-        <input type="text" id="quickAddIntent" placeholder="e.g. email about a summer internship" maxlength="300" />
+      <div class="row" style="margin-bottom:10px">
+        <div class="field" style="margin-bottom:0">
+          <label for="quickAddEmail">Their email (optional)</label>
+          <input type="email" id="quickAddEmail" placeholder="name@company.com" maxlength="200" />
+        </div>
+        <div class="field" style="margin-bottom:0">
+          <label for="quickAddIntent">What's it about? (optional) — steers the draft</label>
+          <input type="text" id="quickAddIntent" placeholder="e.g. email about a summer internship" maxlength="300" />
+        </div>
       </div>
       <div class="paste-actions">
         <button type="button" class="btn btn-primary btn-sm" id="quickAddRunBtn">Extract &amp; add</button>
@@ -818,10 +824,12 @@
       return null;
     }
     var out = res.data || {};
+    // An email you typed in wins over one the extractor found on the page.
+    var typedEmail = String(capture.email || "").trim().slice(0, 200);
     var partial = {
       company: out.company || "",
       contact_name: out.contact_name || "",
-      contact_email: out.contact_email || "",
+      contact_email: typedEmail || out.contact_email || "",
       role: out.role || ""
     };
     var intent = String(capture.intent || "").trim().slice(0, 300);
@@ -887,6 +895,7 @@
         statusEl.textContent = "";
         document.getElementById("quickAddArea").value = payload.text;
         if (payload.intent) document.getElementById("quickAddIntent").value = payload.intent;
+        if (payload.email) document.getElementById("quickAddEmail").value = payload.email;
         if (payload.kind === "linkedin") document.getElementById("quickAddIsLinkedIn").checked = true;
       }
     });
@@ -1326,6 +1335,7 @@
     document.getElementById("quickAddArea").value = "";
     document.getElementById("quickAddIsLinkedIn").checked = false;
     document.getElementById("quickAddIntent").value = "";
+    document.getElementById("quickAddEmail").value = "";
     document.getElementById("quickAddStatus").textContent = "";
   });
   document.getElementById("quickAddRunBtn").addEventListener("click", async function () {
@@ -1335,9 +1345,10 @@
     if (!text.trim()) { statusEl.textContent = "Paste some page text first."; return; }
     var kind = document.getElementById("quickAddIsLinkedIn").checked ? "linkedin" : "page";
     var intent = document.getElementById("quickAddIntent").value;
+    var email = document.getElementById("quickAddEmail").value;
     btn.disabled = true;
     statusEl.textContent = kind === "linkedin" ? "Reading profile…" : "Extracting…";
-    var created = await quickAddFromText({ text: text, kind: kind, intent: intent });
+    var created = await quickAddFromText({ text: text, kind: kind, intent: intent, email: email });
     btn.disabled = false;
     statusEl.textContent = "";
     if (created) {
@@ -1345,6 +1356,7 @@
       document.getElementById("quickAddArea").value = "";
       document.getElementById("quickAddIsLinkedIn").checked = false;
       document.getElementById("quickAddIntent").value = "";
+      document.getElementById("quickAddEmail").value = "";
     }
   });
 

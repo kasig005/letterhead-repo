@@ -38,11 +38,12 @@ Reloading after an update (the ↻ on the card) keeps the same ID.
 
 The popup runs `document.body.innerText` (preferring `<main>`) on the tab you
 clicked, trims it to 20k characters, and stashes
-`{ kind, url, title, text }` in `chrome.storage.session` — `kind` is
-`"linkedin"` for `linkedin.com/in/…` URLs, otherwise `"page"`. The Letterhead
-tab pulls that once via an origin-checked `onMessageExternal` message and clears
-it. The extension holds no credentials and never talks to Supabase, Google, or
-Anthropic directly.
+`{ kind, url, title, text, intent, email }` in `chrome.storage.session` — `kind`
+is `"linkedin"` for `linkedin.com/in/…` URLs, otherwise `"page"`; `intent` is
+the optional brief; `email` is an address you typed in (overrides anything the
+extractor finds on the page). The Letterhead tab pulls that once via an
+origin-checked `onMessageExternal` message and clears it. The extension holds no
+credentials and never talks to Supabase, Google, or Anthropic directly.
 
 ## Trust / LinkedIn note
 
