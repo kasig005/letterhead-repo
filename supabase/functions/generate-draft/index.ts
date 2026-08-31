@@ -424,10 +424,15 @@ Deno.serve(async (req: Request) => {
 
   await userClient.from("companies").update({ status: "generating", error: null }).eq("id", companyId);
 
+  interface Judged { score: number; breakdown: Record<string, number>; feedback: string }
+
   try {
     let attempt = 0;
     let draft: { subject: string; body: string } | null = null;
-    let judged: { score: number; breakdown: Record<string, number>; feedback: string } | null = null;
+    let judged: Judged | null = null;
+    // The loop keeps the highest-scoring attempt, not just the most recent —
+    // a revision can regress, and we don't want to lose a good earlier draft.
+    let best: { draft: { subject: string; body: string }; judged: Judged; attempt: number } | null = null;
 
     while (attempt < MAX_ATTEMPTS) {
       attempt++;
@@ -438,8 +443,11 @@ Deno.serve(async (req: Request) => {
       const prevDraftBlock = channel === "linkedin"
         ? `Your previous message:\n${draft?.body}`
         : `Your previous draft:\nSubject: ${draft?.subject}\nBody:\n${draft?.body}`;
+      const breakdownLine = judged && judged.breakdown && Object.keys(judged.breakdown).length
+        ? `\n\nLast scores by rubric category: ${Object.entries(judged.breakdown).map(([k, v]) => `${k} ${v}`).join(", ")}. Concentrate your fixes on the lowest categories.`
+        : "";
       const writerUser = judged && draft
-        ? `${targetBlock}\n\n${prevDraftBlock}\n\nJudge feedback (fix these specific issues):\n${judged.feedback}\n\nWrite a revised draft that addresses this feedback.`
+        ? `${targetBlock}\n\n${prevDraftBlock}\n\nA judge scored that draft ${judged.score}/100 and asked for these specific fixes:\n${judged.feedback}${breakdownLine}\n\nRevise the draft so it addresses every point above. Keep the parts that already work; change only what the feedback calls out, and do not reintroduce problems from an earlier draft.`
         : `${targetBlock}\n\nWrite a first draft.`;
 
       const w = await callClaude(WRITER_MODEL, writerSystem, writerUser, 1200, "low");
@@ -466,22 +474,29 @@ Deno.serve(async (req: Request) => {
         score: judged.score, breakdown: judged.breakdown, feedback: judged.feedback,
       });
 
+      if (!best || judged.score > best.judged.score) {
+        best = { draft: { ...draft }, judged: { ...judged }, attempt };
+      }
+
+      // The row always holds the best draft seen so far.
+      const b = best;
       const draftCols = channel === "linkedin"
-        ? { generated_linkedin: draft.body }
-        : { generated_subject: draft.subject || null, generated_body: draft.body };
+        ? { generated_linkedin: b.draft.body }
+        : { generated_subject: b.draft.subject || null, generated_body: b.draft.body };
       await userClient.from("companies").update({
         ...draftCols,
         generated_at: new Date().toISOString(),
-        quality_score: judged.score,
+        quality_score: b.judged.score,
         quality_attempts: attempt,
-        quality_feedback: judged.feedback,
+        quality_feedback: b.judged.feedback,
         updated_at: new Date().toISOString(),
       }).eq("id", companyId);
 
       if (judged.score >= PASS_THRESHOLD) break;
     }
 
-    const passed = !!judged && judged.score >= PASS_THRESHOLD;
+    const chosen = best!;
+    const passed = chosen.judged.score >= PASS_THRESHOLD;
 
     // What the writer actually drew on — for the in-app "How it was made" portal.
     const trace = {
@@ -489,8 +504,9 @@ Deno.serve(async (req: Request) => {
       writer_model: WRITER_MODEL,
       judge_model: JUDGE_MODEL,
       generated_at: new Date().toISOString(),
-      final_score: judged?.score ?? null,
+      final_score: chosen.judged.score,
       attempts: attempt,
+      best_attempt: chosen.attempt,
       threshold: PASS_THRESHOLD,
       passed,
       inputs: {
@@ -517,7 +533,7 @@ Deno.serve(async (req: Request) => {
       status: passed ? "pending" : "needs_review",
       error: passed
         ? null
-        : `Best score ${judged?.score ?? 0}/100 after ${attempt} attempt(s) — under the ${PASS_THRESHOLD} bar.`,
+        : `Best score ${chosen.judged.score}/100 (attempt ${chosen.attempt} of ${attempt}) — under the ${PASS_THRESHOLD} bar.`,
       generation_trace: trace,
       updated_at: new Date().toISOString(),
     }).eq("id", companyId);
@@ -526,12 +542,13 @@ Deno.serve(async (req: Request) => {
       ok: true,
       passed,
       channel,
-      score: judged?.score ?? 0,
+      score: chosen.judged.score,
       attempts: attempt,
+      bestAttempt: chosen.attempt,
       threshold: PASS_THRESHOLD,
-      subject: channel === "linkedin" ? "" : (draft?.subject ?? ""),
-      body: draft?.body ?? "",
-      feedback: judged?.feedback ?? "",
+      subject: channel === "linkedin" ? "" : chosen.draft.subject,
+      body: chosen.draft.body,
+      feedback: chosen.judged.feedback,
       writerModel: WRITER_MODEL,
       judgeModel: JUDGE_MODEL,
     });

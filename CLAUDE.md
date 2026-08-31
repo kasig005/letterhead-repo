@@ -182,12 +182,18 @@ agent's terminal action is always a reviewable Gmail draft.
   vendored guidance from `Varnan-Tech/opendirectory` used to tighten them.
   Both `.md` files are still inlined into `index.ts` (see gotcha below).
 
-- **Quality gate — done (2026-08-29).** `generate-draft` now runs a
-  writer → judge loop (`0005_quality_gate.sql`; prompts in
+- **Quality gate — done (2026-08-29; feedback-driven loop hardened
+  2026-08-31, v17).** `generate-draft` runs a writer → judge loop
+  (`0005_quality_gate.sql`; prompts in
   `supabase/functions/generate-draft/prompts/`). Writer drafts, judge
   (`claude-haiku-4-5`, override `ANTHROPIC_JUDGE_MODEL`) scores 0–100 vs
-  `rubric.md`, anything < 80 is rewritten with the feedback, up to 3
-  attempts. Best draft + `quality_score` / `quality_attempts` /
+  `rubric.md`, anything < 80 is rewritten. Each rewrite is **targeted, not
+  blind**: the writer gets its previous draft, the judge's score, the
+  free-text feedback, AND the per-category `breakdown` scores, and is told
+  to keep what works / fix only what's flagged / not regress. The loop keeps
+  the **highest-scoring** attempt (v17 — it used to store the last one), so
+  a regression can't lose a good earlier draft; `generation_trace.best_attempt`
+  records which pass won. `quality_score` / `quality_attempts` /
   `quality_feedback` stored on the row; every pass logged to
   `email_revisions`. A draft that never clears 80 → `status = needs_review`;
   `create-draft` returns 409 `below_quality_bar` for such a row unless
